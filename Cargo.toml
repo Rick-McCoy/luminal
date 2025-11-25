@@ -31,6 +31,11 @@ serde_json = "1.0.140"
 
 [dev-dependencies]
 dfdx = { version = "0.13", features = ["f16"] }
+criterion = "0.5"
+
+[[bench]]
+name = "nn_ops"
+harness = false
 
 [workspace]
 members = [

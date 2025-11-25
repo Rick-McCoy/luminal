@@ -1,6 +1,6 @@
-//! Verification tests for Metal backend
+//! Verification tests for CUDA backend
 //!
-//! These tests verify that Metal-compiled operations produce results
+//! These tests verify that CUDA-compiled operations produce results
 //! consistent with the CPU reference implementation.
 
 #[cfg(test)]
@@ -12,10 +12,10 @@ mod tests {
     };
     use rand::{rngs::StdRng, Rng, SeedableRng};
 
-    use crate::MetalCompiler;
+    use crate::CudaCompiler;
     luminal::test_imports!();
 
-    // Helper to run both CPU and Metal versions and compare
+    // Helper to run both CPU and CUDA versions and compare
     fn compare_with_cpu<F>(build_fn: F, tolerance: f32)
     where
         F: Fn(&mut Graph) -> GraphTensor,
@@ -26,30 +26,30 @@ mod tests {
         cx_cpu.execute();
         let cpu_result = out_cpu.data();
 
-        // Run on Metal
-        let mut cx_metal = Graph::new();
-        let mut out_metal = build_fn(&mut cx_metal).retrieve();
-        cx_metal.compile(MetalCompiler::<f32>::default(), &mut out_metal);
-        cx_metal.execute();
-        let metal_result = out_metal.data();
+        // Run on CUDA
+        let mut cx_cuda = Graph::new();
+        let mut out_cuda = build_fn(&mut cx_cuda).retrieve();
+        cx_cuda.compile(CudaCompiler::<f32>::default(), &mut out_cuda);
+        cx_cuda.execute();
+        let cuda_result = out_cuda.data();
 
         // Compare
         assert_eq!(
             cpu_result.len(),
-            metal_result.len(),
-            "Output lengths differ: CPU={}, Metal={}",
+            cuda_result.len(),
+            "Output lengths differ: CPU={}, CUDA={}",
             cpu_result.len(),
-            metal_result.len()
+            cuda_result.len()
         );
 
-        for (i, (cpu, metal)) in cpu_result.iter().zip(metal_result.iter()).enumerate() {
-            let diff = (cpu - metal).abs();
+        for (i, (cpu, cuda)) in cpu_result.iter().zip(cuda_result.iter()).enumerate() {
+            let diff = (cpu - cuda).abs();
             assert!(
                 diff < tolerance,
-                "Mismatch at index {}: CPU={}, Metal={}, diff={}",
+                "Mismatch at index {}: CPU={}, CUDA={}, diff={}",
                 i,
                 cpu,
-                metal,
+                cuda,
                 diff
             );
         }
@@ -58,7 +58,7 @@ mod tests {
     // ==================== RMSNorm Tests ====================
 
     #[test]
-    fn test_rmsnorm_metal() {
+    fn test_rmsnorm_cuda() {
         let mut rng = StdRng::seed_from_u64(42);
         let input_data: Vec<f32> = (0..32).map(|_| rng.random()).collect();
 
@@ -73,7 +73,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rmsnorm_batch_metal() {
+    fn test_rmsnorm_batch_cuda() {
         let mut rng = StdRng::seed_from_u64(123);
         let input_data: Vec<f32> = (0..128).map(|_| rng.random()).collect();
 
@@ -90,7 +90,7 @@ mod tests {
     // ==================== BatchNorm Tests ====================
 
     #[test]
-    fn test_batchnorm1d_inference_metal() {
+    fn test_batchnorm1d_inference_cuda() {
         let mut rng = StdRng::seed_from_u64(42);
         let input_data: Vec<f32> = (0..24).map(|_| rng.random()).collect();
 
@@ -99,7 +99,6 @@ mod tests {
                 let input = cx.tensor((4, 6)).set(input_data.clone());
                 let mut bn = BatchNorm1d::default_new(6, cx);
                 bn.set_training(false);
-                // Set known running stats
                 bn.running_mean.set(vec![0.0; 6]);
                 bn.running_var.set(vec![1.0; 6]);
                 bn.forward(input)
@@ -109,7 +108,7 @@ mod tests {
     }
 
     #[test]
-    fn test_batchnorm2d_inference_metal() {
+    fn test_batchnorm2d_inference_cuda() {
         let mut rng = StdRng::seed_from_u64(42);
         let input_data: Vec<f32> = (0..96).map(|_| rng.random()).collect();
 
@@ -129,7 +128,7 @@ mod tests {
     // ==================== Pooling Tests ====================
 
     #[test]
-    fn test_maxpool2d_metal() {
+    fn test_maxpool2d_cuda() {
         let input_data: Vec<f32> = (0..64).map(|x| x as f32).collect();
 
         compare_with_cpu(
@@ -143,7 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn test_maxpool2d_multichannel_metal() {
+    fn test_maxpool2d_multichannel_cuda() {
         let mut rng = StdRng::seed_from_u64(42);
         let input_data: Vec<f32> = (0..192).map(|_| rng.random()).collect();
 
@@ -158,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn test_maxpool1d_metal() {
+    fn test_maxpool1d_cuda() {
         let input_data: Vec<f32> = (0..24).map(|x| x as f32).collect();
 
         compare_with_cpu(
@@ -172,7 +171,7 @@ mod tests {
     }
 
     #[test]
-    fn test_global_avg_pool_metal() {
+    fn test_global_avg_pool_cuda() {
         let mut rng = StdRng::seed_from_u64(42);
         let input_data: Vec<f32> = (0..128).map(|_| rng.random()).collect();
 
@@ -187,7 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn test_global_max_pool_metal() {
+    fn test_global_max_pool_cuda() {
         let mut rng = StdRng::seed_from_u64(42);
         let input_data: Vec<f32> = (0..128).map(|_| rng.random()).collect();
 
@@ -202,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn test_avgpool2d_metal() {
+    fn test_avgpool2d_cuda() {
         let mut rng = StdRng::seed_from_u64(42);
         let input_data: Vec<f32> = (0..64).map(|_| rng.random()).collect();
 
@@ -219,7 +218,7 @@ mod tests {
     // ==================== Conv2D with Padding Tests ====================
 
     #[test]
-    fn test_conv2d_with_padding_metal() {
+    fn test_conv2d_with_padding_cuda() {
         let mut rng = StdRng::seed_from_u64(42);
         let input_data: Vec<f32> = (0..64).map(|_| rng.random()).collect();
         let weight_data: Vec<f32> = (0..18).map(|_| rng.random::<f32>() * 0.1).collect();
@@ -236,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn test_conv2d_same_padding_metal() {
+    fn test_conv2d_same_padding_cuda() {
         let mut rng = StdRng::seed_from_u64(42);
         let input_data: Vec<f32> = (0..32).map(|_| rng.random()).collect();
         let weight_data: Vec<f32> = (0..18).map(|_| rng.random::<f32>() * 0.1).collect();
@@ -255,11 +254,10 @@ mod tests {
     // ==================== Dropout Tests ====================
 
     #[test]
-    fn test_dropout_inference_metal() {
+    fn test_dropout_inference_cuda() {
         let mut rng = StdRng::seed_from_u64(42);
         let input_data: Vec<f32> = (0..32).map(|_| rng.random()).collect();
 
-        // In inference mode, dropout should be a no-op
         compare_with_cpu(
             |cx| {
                 let input = cx.tensor((4, 8)).set(input_data.clone());
@@ -274,7 +272,7 @@ mod tests {
     // ==================== LSTM Tests ====================
 
     #[test]
-    fn test_lstm_step_metal() {
+    fn test_lstm_step_cuda() {
         let mut rng = StdRng::seed_from_u64(42);
         let input_data: Vec<f32> = (0..8).map(|_| rng.random()).collect();
         let weight_ih: Vec<f32> = (0..128).map(|_| rng.random::<f32>() * 0.1).collect();
@@ -300,7 +298,7 @@ mod tests {
     // ==================== GRU Tests ====================
 
     #[test]
-    fn test_gru_step_metal() {
+    fn test_gru_step_cuda() {
         let mut rng = StdRng::seed_from_u64(42);
         let input_data: Vec<f32> = (0..8).map(|_| rng.random()).collect();
         let weight_ih: Vec<f32> = (0..96).map(|_| rng.random::<f32>() * 0.1).collect();
@@ -325,7 +323,7 @@ mod tests {
     // ==================== Linear Layer Tests ====================
 
     #[test]
-    fn test_linear_metal() {
+    fn test_linear_cuda() {
         let mut rng = StdRng::seed_from_u64(42);
         let input_data: Vec<f32> = (0..32).map(|_| rng.random()).collect();
         let weight_data: Vec<f32> = (0..256).map(|_| rng.random::<f32>() * 0.1).collect();
@@ -342,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn test_linear_with_bias_metal() {
+    fn test_linear_with_bias_cuda() {
         let mut rng = StdRng::seed_from_u64(42);
         let input_data: Vec<f32> = (0..32).map(|_| rng.random()).collect();
         let weight_data: Vec<f32> = (0..256).map(|_| rng.random::<f32>() * 0.1).collect();
@@ -363,7 +361,7 @@ mod tests {
     // ==================== Combined Model Tests ====================
 
     #[test]
-    fn test_mlp_metal() {
+    fn test_mlp_cuda() {
         use luminal::module::Module;
         use luminal_nn::{ReLU, Swish};
 
@@ -390,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn test_conv_pool_pipeline_metal() {
+    fn test_conv_pool_pipeline_cuda() {
         let mut rng = StdRng::seed_from_u64(42);
         let input_data: Vec<f32> = (0..128).map(|_| rng.random()).collect();
         // Weight size: ch_out * ch_in * kernel_x * kernel_y = 4 * 2 * 3 * 3 = 72

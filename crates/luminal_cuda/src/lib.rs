@@ -16,6 +16,8 @@ pub use prim::PrimitiveCompiler;
 #[cfg(test)]
 #[macro_use]
 mod tests;
+#[cfg(test)]
+mod verification_tests;
 
 use cudarc::{
     driver::{CudaFunction, CudaSlice, DeviceRepr, LaunchArgs, PushKernelArg as _},
