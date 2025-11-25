@@ -1,3 +1,4 @@
+use luminal::compiler_utils::ToIdsMut;
 use luminal::prelude::*;
 
 /// [Stochastic Gradient Descent](https://en.wikipedia.org/wiki/Stochastic_gradient_descent)
@@ -152,6 +153,7 @@ impl AdamState {
         tensors
     }
 
+
     /// Transfer updated states back to the original state tensors
     ///
     /// Call this after each training step along with transferring new weights.
@@ -168,6 +170,19 @@ impl AdamState {
 
         // Transfer t_new -> t
         transfer_data_same_graph(vec![self.t_new.id], vec![self.t.id], graph);
+    }
+}
+
+/// Implement ToIdsMut so AdamState can be passed to Graph::compile()
+/// This is necessary for Metal/CUDA compilation which changes node IDs.
+impl ToIdsMut for AdamState {
+    fn to_ids_mut(&mut self) -> Vec<&mut NodeIndex> {
+        let mut ids = vec![&mut self.t.id, &mut self.t_new.id];
+        ids.extend(self.m.iter_mut().map(|t| &mut t.id));
+        ids.extend(self.v.iter_mut().map(|t| &mut t.id));
+        ids.extend(self.m_new.iter_mut().map(|t| &mut t.id));
+        ids.extend(self.v_new.iter_mut().map(|t| &mut t.id));
+        ids
     }
 }
 

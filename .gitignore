@@ -12,3 +12,6 @@ Cargo.lock
 /**/setup_weights/target
 *.model
 *.gguf
+
+# MNIST dataset
+examples/mnist_cnn/data/
