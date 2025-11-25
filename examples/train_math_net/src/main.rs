@@ -1,6 +1,8 @@
 use luminal::prelude::*;
 use luminal_nn::{Linear, Swish};
-use luminal_training::{mse_loss, sgd_on_graph, Autograd};
+use luminal_training::{
+    adam_on_graph, mse_loss, AdamConfig, Autograd, CosineAnnealingLR, LRScheduler,
+};
 use rand::{rngs::ThreadRng, thread_rng, Rng};
 
 // This is a simple example of using luminal to train.
@@ -22,12 +24,22 @@ fn main() {
     let mut output = model.forward(input).retrieve();
     let mut loss = mse_loss(output, target).retrieve();
 
+    // Get model parameters and compute gradients
     let mut weights = params(&model);
     let grads = cx.compile(Autograd::new(&weights, loss), ());
-    let (mut new_weights, lr) = sgd_on_graph(&mut cx, &weights, &grads);
-    cx.keep_tensors(&new_weights);
+
+    // Use Adam optimizer with cosine annealing learning rate schedule
+    let adam_config = AdamConfig::default().lr(0.01);
+    let (mut new_weights, lr, adam_state) = adam_on_graph(&mut cx, &weights, &grads, adam_config);
+
+    // Keep all tensors needed across iterations
+    cx.keep_tensors(adam_state.all_tensors());
+    cx.keep_tensors(new_weights.clone());
     cx.keep_tensors(&weights);
-    lr.set(1e-1);
+
+    // Setup learning rate scheduler
+    let max_iters = 2000;
+    let scheduler = CosineAnnealingLR::new(0.01, 0.0001, max_iters);
 
     cx.compile(
         (
@@ -52,16 +64,22 @@ fn main() {
     let (mut loss_avg, mut acc_avg) = (ExponentialAverage::new(1.0), ExponentialAverage::new(0.0));
     let mut iter = 0;
     let start = std::time::Instant::now();
-    while acc_avg.value < 0.995 {
+
+    while acc_avg.value < 0.995 && iter < max_iters {
+        // Update learning rate according to schedule
+        scheduler.step(iter, lr);
+
         // Generate problem
         let (problem, answer) = make_problem(&mut rng);
         input.set(problem);
         target.set(answer);
 
-        // Execute graph
+        // Execute graph (forward + backward + optimizer step)
         cx.execute();
-        // Update weights
-        transfer_data_same_graph(&new_weights, &weights, &mut cx);
+
+        // Update weights and optimizer state
+        transfer_data_same_graph(new_weights.clone(), &weights, &mut cx);
+        adam_state.step(&mut cx);
 
         // Report progress
         loss_avg.update(loss.data()[0]);
@@ -77,21 +95,33 @@ fn main() {
                 / 5., // 5 bits predicted
         );
         output.drop();
-        println!(
-            "Iter {iter} Loss: {:.2} Acc: {:.2}",
-            loss_avg.value, acc_avg.value
-        );
+
+        if iter % 100 == 0 {
+            println!(
+                "Iter {iter:4} | Loss: {:.4} | Acc: {:.2}% | LR: {:.6}",
+                loss_avg.value,
+                acc_avg.value * 100.0,
+                scheduler.get_lr(iter)
+            );
+        }
         iter += 1;
     }
+
+    println!("\n=== Training Complete ===");
     println!("Finished in {iter} iterations");
+    println!(
+        "Final Loss: {:.4}, Final Accuracy: {:.2}%",
+        loss_avg.value,
+        acc_avg.value * 100.0
+    );
     println!(
         "Took {:.2}s, {:.2}µs / iter",
         start.elapsed().as_secs_f32(),
-        start.elapsed().as_micros() / iter
+        start.elapsed().as_micros() / iter as u128
     );
 }
 
-// Generate data
+// Generate data: two 4-bit numbers to add
 fn make_problem(rng: &mut ThreadRng) -> ([f32; 8], [f32; 5]) {
     fn get_lower_bits(byte: u8, bits: usize, slice: &mut [f32]) {
         #[allow(clippy::needless_range_loop)]
@@ -110,7 +140,7 @@ fn make_problem(rng: &mut ThreadRng) -> ([f32; 8], [f32; 5]) {
     (p, a)
 }
 
-// Smooth metrics
+// Smooth metrics with exponential moving average
 pub struct ExponentialAverage {
     beta: f32,
     moment: f32,
@@ -137,6 +167,7 @@ impl ExponentialAverage {
         self.value = self.moment / (1. - f32::powi(self.beta, self.t));
     }
 
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.moment = 0.;
         self.value = 0.0;
