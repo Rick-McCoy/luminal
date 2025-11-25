@@ -1,14 +1,27 @@
+#![allow(
+    clippy::type_complexity,
+    clippy::into_iter_on_ref,
+    clippy::for_kv_map,
+    clippy::needless_borrow,
+    clippy::too_many_arguments,
+    clippy::mutable_key_type,
+    clippy::while_let_loop,
+    clippy::clone_on_copy,
+    clippy::unit_arg,
+    clippy::len_zero
+)]
+
 use itertools::Itertools;
 use luminal::{
     prelude::{
-        NodeIndex,
         petgraph::{
-            Directed, Direction,
             algo::toposort,
             prelude::StableGraph,
             unionfind::UnionFind,
             visit::{EdgeRef, NodeIndexable},
+            Directed, Direction,
         },
+        NodeIndex,
     },
     shape::{Expression, Term},
 };
@@ -19,10 +32,10 @@ use std::{
 };
 
 use crate::{
-    GMEMBuffer, GPUArch, GraphTerm, Kernel,
     debug::{display_graph, display_graph2},
     translate::{MetaGraph, SubGraph},
     utils::validate_graph,
+    GMEMBuffer, GPUArch, GraphTerm, Kernel,
 };
 
 pub const GRID_DIMS: usize = 3;
@@ -485,7 +498,8 @@ fn make_kernel(
                             .unwrap();
                         // Use a single loop with correct striding from the input
                         if loads.to_usize().map(|i| i <= 16).unwrap_or_default() {
-                            kernel_lines.push(format!("{spacing}#pragma unroll")); // Loop unroll short loops
+                            kernel_lines.push(format!("{spacing}#pragma unroll"));
+                            // Loop unroll short loops
                         }
                         kernel_lines.push(format!(
                             "{spacing}for (int load = 0; load < {}; ++load) {{",
@@ -724,8 +738,8 @@ fn make_kernel(
                         accs.iter().find(|(_, o, _, _)| *o == output_node)
                     else {
                         return None; // TODO get rid of this
-                        // display_graph(&kernel_graph);
-                        // panic!("Can't find output accumulator");
+                                     // display_graph(&kernel_graph);
+                                     // panic!("Can't find output accumulator");
                     };
                     let outer_out = kernel_graph
                         .neighbors_directed(output_node, Direction::Outgoing)
@@ -764,7 +778,8 @@ fn make_kernel(
                             current_elem_size *= range;
                         }
                         if size.to_usize().map(|i| i <= 16).unwrap_or_default() {
-                            kernel_lines.push(format!("{spacing}#pragma unroll")); // Loop unroll short loops
+                            kernel_lines.push(format!("{spacing}#pragma unroll"));
+                            // Loop unroll short loops
                         }
                         kernel_lines.push(format!(
                             "{spacing}for (int save = 0; save < {}; ++save) {{",
@@ -788,7 +803,7 @@ fn make_kernel(
                     println!("seen loopout");
                 }
                 return None; // TODO: why do we ever see this? should be able to panic here.
-                // panic!("found loopout range: {range} stride: {stride}")
+                             // panic!("found loopout range: {range} stride: {stride}")
             }
             GraphTerm::Custom(_) | GraphTerm::Diff(_) | GraphTerm::Break => {
                 unreachable!("this should be handled directly in codegen!")
@@ -1494,7 +1509,7 @@ pub fn stitch_meta_graph_together(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GPUArch, GraphTerm, translate::SubGraph};
+    use crate::{translate::SubGraph, GPUArch, GraphTerm};
     use std::collections::HashMap;
 
     #[test]

@@ -1,32 +1,53 @@
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
-use std::usize;
+#![allow(
+    clippy::needless_borrow,
+    clippy::needless_lifetimes,
+    clippy::only_used_in_recursion,
+    clippy::while_let_loop
+)]
 
+#[cfg(any(feature = "cuda", feature = "metal"))]
+use std::collections::hash_map::Entry;
+#[cfg(any(feature = "cuda", feature = "metal"))]
+use std::collections::HashMap;
+
+#[cfg(any(feature = "cuda", feature = "metal"))]
 use crate::codegen::codegen;
 use crate::debug::display_graph;
+#[cfg(any(feature = "cuda", feature = "metal"))]
 use crate::run::{assign_buffers, compile_kernels, htod, new_buffer, run_graph};
 use crate::translate::InitData;
+#[cfg(any(feature = "cuda", feature = "metal"))]
 use crate::utils::{build_search_space, print_kernels};
-use crate::{Buffer, Kernel};
-use crate::{GPUArch, GraphTerm};
+#[cfg(any(feature = "cuda", feature = "metal"))]
+use crate::Buffer;
+#[cfg(any(feature = "cuda", feature = "metal"))]
+use crate::GPUArch;
+use crate::GraphTerm;
+#[cfg(any(feature = "cuda", feature = "metal"))]
+use crate::Kernel;
+#[cfg(any(feature = "cuda", feature = "metal"))]
 use colored::Colorize;
 #[cfg(feature = "cuda")]
 use cudarc::driver::CudaContext;
 use egraph_serialize::{ClassId, EGraph, NodeId};
 use itertools::Itertools;
-use luminal::prelude::NodeIndex;
 use luminal::prelude::petgraph::prelude::StableGraph;
 use luminal::prelude::petgraph::{Directed, Direction};
+use luminal::prelude::NodeIndex;
 use luminal::shape::{Expression, Term};
 #[cfg(feature = "metal")]
 use objc2_metal::MTLCreateSystemDefaultDevice;
-use rand::{Rng, rng};
+use rand::{rng, Rng};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+#[cfg(any(feature = "cuda", feature = "metal"))]
 const WARMUP_TRIALS: usize = 0;
+#[cfg(any(feature = "cuda", feature = "metal"))]
 const TRIALS: usize = 1;
+#[cfg(any(feature = "cuda", feature = "metal"))]
 const MAX_SEARCHED_GRAPHS: usize = 1_000;
 const MAX_CYCLES: usize = 1;
+#[allow(dead_code)]
 const INVALID_IR: &[&str] = &[
     "SwapLoops",
     "TileLoop",
@@ -41,8 +62,10 @@ const INVALID_IR: &[&str] = &[
     "set-of",
 ];
 
+#[cfg(any(feature = "cuda", feature = "metal"))]
 type Cost = u128; // Execution time in microseconds
 
+#[allow(dead_code)]
 fn is_expression_enode(enode_label: &str) -> bool {
     matches!(
         enode_label,
@@ -113,6 +136,7 @@ pub fn extract_shortest<'a>(
         .min_by_key(|p| p.len())
 }
 
+#[allow(dead_code)]
 fn extract_trajectories<'a>(
     egraph: &'a EGraph,
     current_class: &'a ClassId,
@@ -220,6 +244,7 @@ fn extract_trajectories<'a>(
 }
 
 /// Given total trajectories each enode can yield, and a budget, return how many trajectories should be yielded from each enode
+#[allow(dead_code)]
 fn sample_enodes(enode_traj_counts: &[usize], traj_budget: usize) -> Vec<usize> {
     let total: f64 = enode_traj_counts.iter().map(|&c| c as f64).sum();
     if total == 0.0 {
@@ -251,6 +276,7 @@ fn sample_enodes(enode_traj_counts: &[usize], traj_budget: usize) -> Vec<usize> 
     alloc
 }
 
+#[allow(dead_code)]
 fn count_trajectories<'a>(
     egraph: &'a EGraph,
     current_class: &'a ClassId,
@@ -327,6 +353,7 @@ pub fn human_readable(n: usize) -> String {
     }
 }
 
+#[cfg(any(feature = "cuda", feature = "metal"))]
 pub fn search(
     graph: &StableGraph<GraphTerm, ()>,
     steps: usize,
@@ -859,6 +886,7 @@ pub fn extraction_to_graph(
     g
 }
 
+#[cfg(any(feature = "cuda", feature = "metal"))]
 fn map_inputs_into_kernel_graph<'a>(
     inputs: &'a [(String, Buffer)],
     graph: &StableGraph<GraphTerm, ()>,
@@ -871,6 +899,7 @@ fn map_inputs_into_kernel_graph<'a>(
       	.collect()
 }
 
+#[cfg(any(feature = "cuda", feature = "metal"))]
 fn cost<'a>(
     kernels: &StableGraph<Kernel, (usize, usize), Directed>,
     inputs: &[(NodeIndex, &Buffer)],

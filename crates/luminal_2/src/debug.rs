@@ -1,3 +1,5 @@
+#![allow(clippy::unnecessary_min_or_max, clippy::needless_range_loop)]
+
 use std::f32::consts::{FRAC_PI_2, TAU};
 
 use eframe::{
@@ -8,7 +10,7 @@ use egglog::Term;
 use egui::ViewportId;
 use itertools::Itertools;
 use luminal::{
-    prelude::petgraph::{Directed, Direction, graph::NodeIndex, prelude::StableGraph},
+    prelude::petgraph::{graph::NodeIndex, prelude::StableGraph, Directed, Direction},
     shape::Expression,
 };
 use rustc_hash::{FxHashMap, FxHashSet};

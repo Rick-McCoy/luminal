@@ -1,3 +1,6 @@
+#![allow(clippy::mutable_key_type, clippy::map_flatten)]
+
+#[cfg(any(feature = "cuda", feature = "metal"))]
 use itertools::Itertools;
 
 #[cfg(feature = "cuda")]
@@ -5,17 +8,18 @@ use cudarc::{driver::*, nvrtc::CompileOptions};
 
 use luminal::{
     prelude::{
-        NodeIndex,
         petgraph::{
-            Direction,
             algo::toposort,
             prelude::StableGraph,
             visit::{EdgeRef, IntoEdgeReferences},
+            Direction,
         },
+        NodeIndex,
     },
     shape::Expression,
 };
 use rustc_hash::FxHashMap;
+#[cfg(any(feature = "cuda", feature = "metal"))]
 use std::{fs::File, io::Read};
 #[cfg(feature = "metal")]
 use {
@@ -24,6 +28,7 @@ use {
     std::{ffi::c_void, ptr::NonNull},
 };
 
+#[cfg(any(feature = "cuda", feature = "metal"))]
 use crate::Buffer;
 #[cfg(feature = "cuda")]
 use crate::GraphTerm;
@@ -136,7 +141,7 @@ pub fn compile_kernels(
             && kernel.code != "Inputs"
             && kernel.code != "Outputs"
         {
-            use objc2_foundation::{NSString, ns_string};
+            use objc2_foundation::{ns_string, NSString};
             use objc2_metal::{MTLDevice, MTLLibrary};
             let lib = device
                 .newLibraryWithSource_options_error(&NSString::from_str(&kernel.code), None)

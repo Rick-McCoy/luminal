@@ -34,6 +34,11 @@ pub type Function = Retained<ProtocolObject<dyn MTLFunction>>;
 pub type Device = std::sync::Arc<luminal_cuda::CudaContext>;
 #[cfg(feature = "cuda")]
 pub type Buffer = cudarc::driver::CudaSlice<f32>;
+// Stub types when no GPU backend is enabled
+#[cfg(not(any(feature = "cuda", feature = "metal")))]
+pub type Buffer = Vec<f32>;
+#[cfg(not(any(feature = "cuda", feature = "metal")))]
+pub type Device = ();
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum GPUArch {
@@ -183,6 +188,13 @@ impl Operator for CompatKernel {
     }
 }
 
+#[cfg(not(any(feature = "cuda", feature = "metal")))]
+impl Operator for CompatKernel {
+    fn process(&mut self, _inputs: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
+        panic!("CompatKernel requires 'cuda' or 'metal' feature to be enabled")
+    }
+}
+
 pub fn custom_kernel(
     inputs: &[GraphTensor],
     kernel: Kernel,
@@ -227,6 +239,13 @@ impl Operator for Diff {
 impl Operator for Diff {
     fn process(&mut self, _inp: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
         todo!()
+    }
+}
+
+#[cfg(not(any(feature = "cuda", feature = "metal")))]
+impl Operator for Diff {
+    fn process(&mut self, _inp: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
+        panic!("Diff requires 'cuda' or 'metal' feature to be enabled")
     }
 }
 

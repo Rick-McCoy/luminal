@@ -1,20 +1,27 @@
-#![allow(unused)]
+#![allow(
+    unused,
+    clippy::collapsible_if,
+    clippy::only_used_in_recursion,
+    clippy::type_complexity,
+    clippy::needless_borrow,
+    clippy::explicit_counter_loop
+)]
 
 use std::{collections::HashMap, io::Write};
 
-use egglog::{CommandOutput, EGraph, Error, Term, prelude::exprs::var};
+use egglog::{prelude::exprs::var, CommandOutput, EGraph, Error, Term};
 use egui::Color32;
 use itertools::Itertools;
 use luminal::{
     prelude::{
-        NodeIndex,
         petgraph::{
-            Directed, Direction,
             algo::toposort,
             dot::{Config, Dot},
             prelude::StableGraph,
             visit::{EdgeRef, Topo},
+            Directed, Direction,
         },
+        NodeIndex,
     },
     shape::Expression,
 };
@@ -97,7 +104,7 @@ pub fn pad_out(
     node
 }
 
-use crate::{GraphTerm, Kernel, debug::display_graph};
+use crate::{debug::display_graph, GraphTerm, Kernel};
 
 pub fn validate_graph(graph: &StableGraph<(GraphTerm, usize), (), Directed>) {
     // walk the graph and make sure loopins -> next loop level (or loopout) and prev loop (or loopin) -> loopout
@@ -453,10 +460,9 @@ pub fn render_egglog_inline(
 /// Runs an Egglog program from a string and returns its output messages.
 fn run_egglog_program(code: &str, root: &str) -> Result<egraph_serialize::EGraph, Error> {
     // Create a fresh EGraph with all the defaults
-    let mut egraph = egglog_experimental::new_experimental_egraph();
-    let commands = egraph.parser.get_program_from_string(None, code)?;
+    let mut egraph = EGraph::default();
     let start = std::time::Instant::now();
-    let msgs = egraph.run_program(commands)?;
+    let msgs = egraph.parse_and_run_program(None, code)?;
     if option_env!("PRINT_EGGLOG")
         .map(|s| s.parse::<i32>().map(|i| i == 1).unwrap_or_default())
         .unwrap_or_default()
@@ -516,7 +522,6 @@ use crossterm::{
     terminal::{self, LeaveAlternateScreen},
 };
 use ratatui::{
-    Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Layout},
     style::{Color, Style},
@@ -524,6 +529,7 @@ use ratatui::{
     widgets::{
         Block, Borders, Gauge, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
     },
+    Terminal,
 };
 use std::{
     sync::mpsc,

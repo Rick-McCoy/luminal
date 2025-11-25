@@ -1,4 +1,5 @@
 // egraph_debugger.rs  (compact version)
+#![allow(clippy::needless_range_loop, clippy::never_loop)]
 
 use eframe::{
     egui,

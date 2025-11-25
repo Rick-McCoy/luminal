@@ -275,7 +275,7 @@ impl Graph {
         let mut dim_stack = Vec::new();
         let mut consumers = self.consumers_map.as_ref().unwrap().clone();
         let mut op_times = FxHashMap::default();
-        let width = term_size::dimensions().unwrap().0;
+        let width = term_size::dimensions().map(|(w, _)| w).unwrap_or(80);
 
         println!(
             "{:->2$} Executing {:->2$}",

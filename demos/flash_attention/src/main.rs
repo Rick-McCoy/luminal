@@ -19,9 +19,9 @@ use egglog::{var, EGraph, Error};
 
 /// Optional imports for graphviz feature
 #[cfg(feature = "graphvis")]
-use egglog::{Term, TermDag, ast::Literal};
+use egglog::{ast::Literal, Term, TermDag};
 #[cfg(feature = "graphvis")]
-use petgraph::{Directed, graph::NodeIndex, prelude::StableGraph};
+use petgraph::{graph::NodeIndex, prelude::StableGraph, Directed};
 #[cfg(feature = "graphvis")]
 use regex::Regex;
 #[cfg(feature = "graphvis")]
@@ -41,7 +41,11 @@ pub fn run_egglog_program(code: &str) -> Result<(Vec<String>, String, String), E
             // Convert to string and trim whitespace (like trailing newlines)
             let s = output.to_string().trim().to_string();
             // Only keep the string if it's not empty
-            if s.is_empty() { None } else { Some(s) }
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
         })
         .collect();
     println!("Run Report:  {}", egraph.get_overall_run_report());

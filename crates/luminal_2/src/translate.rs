@@ -1,10 +1,17 @@
+#![allow(
+    clippy::type_complexity,
+    clippy::mutable_key_type,
+    clippy::too_many_arguments,
+    clippy::needless_range_loop
+)]
+
 use crate::{
-    CompatKernel, Diff, GraphTerm,
     codegen::{GRID_DIMS, THREADBLOCK_DIMS},
     utils::{loop_in, loop_out},
+    CompatKernel, Diff, GraphTerm,
 };
 use luminal::prelude::{
-    petgraph::{Directed, algo::toposort, prelude::StableGraph},
+    petgraph::{algo::toposort, prelude::StableGraph, Directed},
     *,
 };
 use rustc_hash::FxHashMap;
