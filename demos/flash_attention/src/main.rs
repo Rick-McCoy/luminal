@@ -14,7 +14,8 @@ fn main() {
 }
 
 use colored::Colorize;
-use egglog::{EGraph, Error, var};
+use egglog::prelude::{RustSpan, Span};
+use egglog::{var, EGraph, Error};
 
 /// Optional imports for graphviz feature
 #[cfg(feature = "graphvis")]
