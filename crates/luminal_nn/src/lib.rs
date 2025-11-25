@@ -16,3 +16,4 @@ mod recurrent;
 pub use recurrent::*;
 mod transformer;
 pub use transformer::*;
+pub mod utils;
