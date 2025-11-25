@@ -99,17 +99,34 @@ pub struct Conv2D {
     kernel: (usize, usize),
     stride: (usize, usize),
     dilation: (usize, usize),
+    padding: (usize, usize),
     ch_out: usize,
     ch_in: usize,
 }
 
 impl Conv2D {
+    /// Create a new Conv2D layer without padding (legacy API)
     pub fn new(
         ch_in: usize,
         ch_out: usize,
         kernel: (usize, usize),
         stride: (usize, usize),
         dilation: (usize, usize),
+        bias: bool,
+        cx: &mut Graph,
+    ) -> Self {
+        Self::with_padding(ch_in, ch_out, kernel, stride, dilation, (0, 0), bias, cx)
+    }
+
+    /// Create a new Conv2D layer with padding
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_padding(
+        ch_in: usize,
+        ch_out: usize,
+        kernel: (usize, usize),
+        stride: (usize, usize),
+        dilation: (usize, usize),
+        padding: (usize, usize),
         bias: bool,
         cx: &mut Graph,
     ) -> Self {
@@ -123,9 +140,22 @@ impl Conv2D {
             kernel,
             stride,
             dilation,
+            padding,
             ch_out,
             ch_in,
         }
+    }
+
+    /// Create with "same" padding that preserves spatial dimensions (for stride=1)
+    pub fn same(
+        ch_in: usize,
+        ch_out: usize,
+        kernel: (usize, usize),
+        bias: bool,
+        cx: &mut Graph,
+    ) -> Self {
+        let padding = (kernel.0 / 2, kernel.1 / 2);
+        Self::with_padding(ch_in, ch_out, kernel, (1, 1), (1, 1), padding, bias, cx)
     }
 }
 
@@ -147,6 +177,19 @@ impl Conv2D {
             input = input.expand_dim(0, 1);
             expanded = true;
         }
+
+        // Apply padding if specified
+        if self.padding.0 > 0 || self.padding.1 > 0 {
+            input = input
+                .pad(((0, 0), (0, 0), (self.padding.0, 0), (0, 0)))
+                .contiguous()
+                .pad(((0, 0), (0, 0), (0, self.padding.0), (0, 0)))
+                .contiguous()
+                .pad(((0, 0), (0, 0), (0, 0), (self.padding.1, 0)))
+                .contiguous()
+                .pad(((0, 0), (0, 0), (0, 0), (0, self.padding.1)));
+        }
+
         let (batch, _, dimx_in, dimy_in) = input.dims4();
         let dimx_out = (((dimx_in - self.dilation.0 * (self.kernel.0 - 1) - 1) / self.stride.0)
             + 1)

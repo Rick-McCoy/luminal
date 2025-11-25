@@ -12,5 +12,7 @@ mod norm;
 pub use norm::*;
 mod pooling;
 pub use pooling::*;
+mod recurrent;
+pub use recurrent::*;
 mod transformer;
 pub use transformer::*;
