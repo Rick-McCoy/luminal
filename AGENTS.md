@@ -1,11 +1,30 @@
 # Contributor Guide
 
-## Structure
-Luminal is a core-and-plugin design, where the core crate `.` contains everything core to Luminal including the graph and the GraphTensor api, the shapetracker, and the primitive ops.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed contribution guidelines.
 
-All other functionality is split into crates in the `crates/` directory. For instance, the Cuda compiler is in `luminal_cuda` and the autograd engine is in `luminal_training`. `luminal_nn` has common nn modules.
+## Quick Reference
 
-## Testing Instructions
-- Find the CI plan in the .github/workflows folder.
-- Currently running `cargo test` in luminal_metal and luminal_cuda require access to an Apple and Nvidia GPU respectively.
-- PRs must have no clippy errors and `cargo fmt` must be ran before a PR is submitted.
+### Structure
+- Core library: `src/` (graph, GraphTensor API, shape tracker, primitive ops)
+- GPU backends: `crates/luminal_metal/` and `crates/luminal_cuda/`
+- NN modules: `crates/luminal_nn/`
+- Training: `crates/luminal_training/` (autograd, optimizers, loss functions)
+
+### Testing Commands
+
+```bash
+# Core tests (all platforms)
+cargo test --workspace
+
+# Metal tests (macOS only)
+cd crates/luminal_metal && cargo test -- --test-threads=1
+
+# CUDA tests (requires NVIDIA GPU)
+cd crates/luminal_cuda && cargo test
+```
+
+### PR Checklist
+- [ ] `cargo fmt --all` (also in `crates/luminal_metal` and `crates/luminal_cuda`)
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
+- [ ] `cargo test --workspace`
+- [ ] New features have tests comparing against dfdx/PyTorch

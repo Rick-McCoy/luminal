@@ -7,6 +7,8 @@ use std::{
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod verification_tests;
 
 pub mod binary;
 pub mod command_buffer;

@@ -166,17 +166,17 @@ fn main() {
 
         // Print the new substring added to the decoded output
         let legal_byte_num = utf8_legal_byte_num(current_output.as_bytes()[prev_output_len]);
-        if let Some(byte_num) = legal_byte_num {
-            if current_output.len() > byte_num + prev_output_len {
-                print!(
-                    "{}",
-                    current_output[prev_output_len..prev_output_len + byte_num].bright_green()
-                );
-                io::stdout().flush().unwrap();
+        if let Some(byte_num) = legal_byte_num
+            && current_output.len() > byte_num + prev_output_len
+        {
+            print!(
+                "{}",
+                current_output[prev_output_len..prev_output_len + byte_num].bright_green()
+            );
+            io::stdout().flush().unwrap();
 
-                // Update the previous output
-                prev_output_len += byte_num
-            }
+            // Update the previous output
+            prev_output_len += byte_num
         }
 
         // Swap caches

@@ -1,53 +1,220 @@
-name: Test
+name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
-  unit_test:
-    name: Unit Tests
+  # ============================================
+  # Core Tests (Ubuntu) - CPU only
+  # ============================================
+  test-core:
+    name: Core Tests (Ubuntu)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Run tests
-      run: rustup update; cargo test --workspace --verbose
+      - uses: actions/checkout@v4
 
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run core tests
+        run: cargo test --workspace --verbose
+
+  # ============================================
+  # Metal Tests (macOS)
+  # ============================================
+  test-metal:
+    name: Metal Tests (macOS)
+    runs-on: macos-14  # M1 runner for Metal support
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-metal-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-metal-
+
+      - name: Build luminal_metal
+        working-directory: crates/luminal_metal
+        run: cargo build --verbose
+
+      - name: Run Metal tests
+        working-directory: crates/luminal_metal
+        run: cargo test --verbose -- --test-threads=1
+
+  # ============================================
+  # Example Builds (verify examples compile)
+  # ============================================
+  build-examples:
+    name: Build Examples
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            features: ""
+          - os: macos-14
+            features: "--features metal"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-examples-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-examples-
+
+      - name: Build llama example
+        working-directory: examples/llama
+        run: cargo build --release ${{ matrix.features }}
+
+      - name: Build simple example
+        working-directory: examples/simple
+        run: cargo build --release ${{ matrix.features }}
+
+      - name: Build train_math_net example
+        working-directory: examples/train_math_net
+        run: cargo build --release
+
+  # ============================================
+  # Linting
+  # ============================================
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Run clippy
-      run: rustup update; cargo clippy --all-targets -- -D warnings
+      - uses: actions/checkout@v4
 
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          components: clippy
+
+      - name: Run clippy on workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  clippy-metal:
+    name: Clippy (Metal)
+    runs-on: macos-14
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          components: clippy
+
+      - name: Run clippy on luminal_metal
+        working-directory: crates/luminal_metal
+        run: cargo clippy --all-targets -- -D warnings
+
+  # ============================================
+  # Formatting
+  # ============================================
   fmt:
-    name: Fmt
+    name: Format Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting (workspace)
+        run: cargo fmt --all --check
+
+      - name: Check formatting (luminal_metal)
+        working-directory: crates/luminal_metal
+        run: cargo fmt --all --check
+
+      - name: Check formatting (luminal_cuda)
+        working-directory: crates/luminal_cuda
+        run: cargo fmt --all --check
+
+  # ============================================
+  # Documentation
+  # ============================================
+  docs:
+    name: Documentation
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Format
-      run: cargo fmt --all --check
+      - uses: actions/checkout@v4
 
-#   macos_test:
-#     name: MacOS Tests
-#     runs-on: macos-13
-#     timeout-minutes: 20
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
 
-#     steps:
-#     - uses: actions/checkout@v4
-#     - name: Build
-#       run: cargo build --verbose
-#     - name: Run tests
-#       run: cargo test --verbose -- --test-threads 1
+      - name: Build documentation
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # ============================================
+  # CUDA Tests (optional - requires self-hosted runner)
+  # Uncomment when a GPU runner is available
+  # ============================================
+  # test-cuda:
+  #   name: CUDA Tests
+  #   runs-on: [self-hosted, cuda]
+  #   timeout-minutes: 30
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Build luminal_cuda
+  #       working-directory: crates/luminal_cuda
+  #       run: cargo build --verbose
+  #
+  #     - name: Run CUDA tests
+  #       working-directory: crates/luminal_cuda
+  #       run: cargo test --verbose

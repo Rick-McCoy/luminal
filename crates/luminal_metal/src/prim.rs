@@ -269,8 +269,8 @@ macro_rules! metal_binary_op {
                 let (dyn_symbols, rendered) = render_dyn_dim_inputs(&[a_shape, b_shape], 4);
                 let type_name = T::type_name();
                 let op = $fn(
-                	format!("(({}) == 0 ? 0.0h : inp_a[{}])", a_valid_exp, a_idx_exp),
-                 	format!("(({}) == 0 ? 0.0h : inp_b[{}])", b_valid_exp, b_idx_exp)
+                	format!("(({}) == 0 ? ({})0.0 : inp_a[{}])", a_valid_exp, type_name, a_idx_exp),
+                 	format!("(({}) == 0 ? ({})0.0 : inp_b[{}])", b_valid_exp, type_name, b_idx_exp)
                 );
                 let code = format!(
                     "

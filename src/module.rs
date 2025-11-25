@@ -48,14 +48,30 @@ pub fn transfer_data(
 
 /// Transfer data from one set of nodes to another set in the same graph
 pub fn transfer_data_same_graph(srcs: impl ToIds, dests: impl ToIds, graph: &mut Graph) {
-    for (src, dest) in srcs.to_ids().into_iter().zip(dests.to_ids().into_iter()) {
+    let dests = dests.to_ids();
+    for (src, dest) in srcs.to_ids().into_iter().zip(dests.iter()) {
         let mut output_num = 0;
         while let Some(tensor) = graph.tensors.remove(&(src, output_num)) {
-            graph.tensors.insert((dest, output_num), tensor);
+            graph.tensors.insert((*dest, output_num), tensor);
             output_num += 1;
         }
         if output_num == 0 {
             panic!("No source tensor found for node {}", src.index());
+        }
+    }
+
+    // Clear cached outputs of immediate children of destination nodes
+    // This ensures that nodes like MetalCopyToDevice re-execute to pick up new data
+    for dest in dests.iter() {
+        for child in graph
+            .graph
+            .neighbors_directed(*dest, petgraph::Direction::Outgoing)
+            .collect::<Vec<_>>()
+        {
+            let mut output_num = 0;
+            while graph.tensors.remove(&(child, output_num)).is_some() {
+                output_num += 1;
+            }
         }
     }
 }

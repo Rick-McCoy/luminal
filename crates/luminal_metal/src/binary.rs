@@ -30,9 +30,9 @@ impl<T: MetalFloat> Compiler for MetalSubtractionCompiler<T> {
     fn compile<To: ToIdsMut>(&self, graph: &mut Graph, mut ids: To) {
         let dev = Device::system_default().unwrap();
         let queue = dev.new_command_queue();
-        let rhs = node();
+        let (lhs, rhs) = (node(), node());
         let mul = binary::<MetalMul<T>>(rhs.clone(), constant::<T>(-1.));
-        let add = unary::<MetalAdd<T>>(mul.clone());
+        let add = binary::<MetalAdd<T>>(lhs.clone(), mul.clone());
         let mut s = add.clone().search(graph);
         while s.next_match() {
             if s.check_no_delete(&[add.id]) {
@@ -40,8 +40,8 @@ impl<T: MetalFloat> Compiler for MetalSubtractionCompiler<T> {
             }
             let add = s.get(&add);
             let (a, a_edge) = graph
-                .edges_directed(add, petgraph::Direction::Incoming)
-                .find(|e| e.source() != s.get(&mul))
+                .edges_connecting(s.get(&lhs), add)
+                .next()
                 .map(|e| (e.source(), e.weight().as_data().unwrap()))
                 .unwrap();
             let (b, b_edge) = graph
@@ -49,13 +49,14 @@ impl<T: MetalFloat> Compiler for MetalSubtractionCompiler<T> {
                 .next()
                 .map(|e| (e.source(), e.weight().as_data().unwrap()))
                 .unwrap();
-            let (_, _, b_final_shape) = graph
+            let b_final_shape = graph
                 .edges_connecting(s.get(&mul), add)
                 .next()
                 .unwrap()
                 .weight()
                 .as_data()
-                .unwrap();
+                .unwrap()
+                .2;
             if b_final_shape.is_reshaped() {
                 continue;
             }
