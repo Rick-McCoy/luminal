@@ -70,7 +70,40 @@ jobs:
 
       - name: Run Metal tests
         working-directory: crates/luminal_metal
-        run: cargo test --verbose -- --test-threads=1
+        run: cargo test --verbose
+
+  # ============================================
+  # luminal_2 Metal Tests (macOS)
+  # ============================================
+  test-luminal-2-metal:
+    name: luminal_2 Metal Tests (macOS)
+    runs-on: macos-14  # M1 runner for Metal support
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-luminal2-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-luminal2-
+
+      - name: Build luminal_2 with Metal
+        working-directory: crates/luminal_2
+        run: cargo build --features metal --verbose
+
+      - name: Run luminal_2 Metal tests
+        working-directory: crates/luminal_2
+        run: cargo test --features metal --verbose
 
   # ============================================
   # Example Builds (verify examples compile)

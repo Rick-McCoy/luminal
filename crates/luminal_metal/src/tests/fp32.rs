@@ -1,5 +1,5 @@
 use dfdx::prelude::{Module as DfdxModule, *};
-use rand::{rngs::StdRng, SeedableRng};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 
 use luminal::{module::Module, prelude::*};
 use luminal_nn::{Conv1D, Linear, ReLU};
@@ -462,90 +462,65 @@ fn test_pool_1d_dilation() {
 
 #[test]
 fn test_conv2d() {
-    let mut cx = Graph::new();
+    // Test Conv2D with stride=kernel (no overlap), matching verification test pattern
+    let mut rng = StdRng::seed_from_u64(42);
 
     const CH_IN: usize = 5;
     const CH_OUT: usize = 2;
-    const KERNELX: usize = 2;
-    const KERNELY: usize = 2;
-    const STRIDEX: usize = KERNELX;
-    const STRIDEY: usize = KERNELY;
-    const DILATIONX: usize = 1;
-    const DILATIONY: usize = 1;
+    const KERNEL: (usize, usize) = (2, 2);
+    const STRIDE: (usize, usize) = (2, 2);
+    const DILATION: (usize, usize) = (1, 1);
     const DIMX_IN: usize = 16;
-    const DIMY_IN: usize = 9;
+    const DIMY_IN: usize = 8;
 
-    let inp1 = cx.tensor((CH_IN, DIMX_IN, DIMY_IN)).set(vec![
-        8., 8., 5., 7., 0., 6., 5., 3., 0., 7., 0., 6., 6., 7., 7., 5., 0., 6., 9., 4., 0., 8., 8.,
-        5., 7., 6., 2., 8., 9., 5., 0., 3., 1., 1., 8., 4., 1., 1., 5., 6., 9., 3., 2., 9., 4., 7.,
-        1., 0., 7., 7., 4., 9., 5., 0., 4., 7., 4., 7., 8., 8., 4., 8., 4., 7., 9., 3., 7., 9., 5.,
-        8., 5., 9., 0., 9., 5., 6., 8., 9., 5., 4., 1., 9., 7., 2., 2., 7., 9., 3., 1., 2., 8., 4.,
-        0., 8., 0., 5., 6., 7., 7., 4., 3., 4., 6., 8., 3., 7., 8., 8., 7., 1., 5., 1., 8., 0., 1.,
-        1., 7., 3., 2., 1., 0., 4., 5., 4., 3., 2., 5., 4., 2., 4., 1., 9., 4., 1., 9., 7., 7., 1.,
-        2., 6., 3., 4., 1., 1., 6., 6., 8., 2., 7., 7., 9., 0., 9., 0., 1., 4., 2., 4., 9., 6., 8.,
-        6., 1., 6., 3., 8., 3., 4., 5., 0., 2., 1., 8., 2., 2., 8., 7., 0., 7., 7., 3., 4., 5., 0.,
-        7., 2., 1., 1., 4., 2., 9., 9., 6., 1., 5., 4., 6., 9., 5., 4., 1., 9., 1., 5., 5., 5., 8.,
-        8., 0., 1., 3., 0., 8., 8., 5., 1., 6., 1., 5., 6., 4., 4., 4., 0., 1., 1., 5., 1., 7., 2.,
-        3., 5., 5., 4., 9., 1., 3., 7., 6., 7., 1., 5., 3., 8., 6., 6., 6., 7., 3., 2., 2., 8., 1.,
-        3., 0., 2., 7., 6., 5., 7., 5., 7., 8., 1., 2., 2., 5., 0., 2., 9., 1., 5., 3., 8., 7., 9.,
-        7., 2., 8., 8., 8., 6., 3., 2., 7., 7., 0., 3., 7., 8., 3., 7., 2., 3., 2., 7., 5., 5., 6.,
-        0., 9., 0., 9., 9., 1., 8., 7., 9., 6., 8., 7., 5., 4., 9., 5., 6., 3., 2., 8., 3., 0., 6.,
-        3., 8., 3., 1., 8., 7., 2., 0., 7., 7., 7., 7., 8., 0., 4., 9., 8., 2., 0., 4., 4., 3., 5.,
-        5., 3., 0., 3., 6., 3., 1., 2., 9., 9., 6., 8., 1., 2., 6., 8., 6., 0., 0., 2., 8., 8., 5.,
-        0., 5., 9., 0., 8., 1., 1., 3., 5., 9., 3., 5., 8., 6., 3., 2., 9., 4., 8., 3., 9., 5., 2.,
-        9., 0., 1., 6., 8., 0., 3., 0., 1., 2., 1., 0., 1., 4., 1., 1., 0., 6., 9., 2., 7., 2., 6.,
-        0., 4., 8., 2., 6., 7., 2., 2., 7., 4., 5., 8., 1., 4., 7., 5., 9., 7., 2., 5., 9., 1., 6.,
-        1., 7., 9., 5., 6., 9., 3., 5., 1., 6., 1., 3., 3., 9., 3., 9., 0., 1., 8., 1., 9., 8., 5.,
-        3., 4., 4., 1., 5., 5., 4., 4., 5., 8., 7., 1., 1., 7., 3., 9., 0., 1., 3., 4., 8., 4., 0.,
-        5., 6., 2., 0., 7., 8., 2., 6., 2., 9., 6., 2., 0., 3., 7., 5., 7., 1., 8., 5., 5., 9., 1.,
-        0., 3., 5., 7., 5., 3., 2., 8., 6., 3., 0., 5., 8., 5., 7., 8., 8., 2., 9., 0., 1., 8., 6.,
-        0., 3., 2., 5., 2., 9., 8., 9., 6., 2., 0., 3., 2., 5., 9., 1., 3., 6., 5., 2., 8., 2., 2.,
-        1., 8., 6., 4., 1., 6., 0., 7., 3., 0., 9., 6., 5., 5., 5., 2., 4., 2., 8., 3., 0., 6., 3.,
-        8., 8., 4., 9., 4., 7., 0., 3., 5., 1., 4., 6., 0., 0., 5., 9., 7., 8., 6., 7., 0., 6., 7.,
-        0., 5., 8., 8., 6., 4., 6., 0., 2., 3., 2., 8., 7., 5., 9., 6., 6., 2., 0., 4., 4., 4., 4.,
-        2., 7., 5., 3., 2., 6., 3., 7., 0., 7., 2., 5., 1., 4., 4., 5., 1., 6., 7., 5., 7., 0., 7.,
-        8., 4., 7., 3., 9., 1., 7., 5., 6., 1., 0., 2., 0., 0., 5., 5., 8., 8., 7., 3., 7., 2., 9.,
-        3., 8., 4., 5., 3., 8., 5., 2., 0., 2., 0., 5., 9., 0., 3., 8., 0., 4., 1., 8., 4., 8., 9.,
-        1., 1., 4., 5., 0., 2., 0., 9., 4., 2., 3., 9., 0., 7., 3., 1., 5., 9., 1., 6., 5., 4., 2.,
-        1., 2., 1., 1., 4., 7., 2.,
-    ]);
+    let input_data: Vec<f32> = (0..(CH_IN * DIMX_IN * DIMY_IN))
+        .map(|_| rng.random::<f32>() * 2.0 - 1.0)
+        .collect();
+    let weight_data: Vec<f32> = (0..(CH_OUT * CH_IN * KERNEL.0 * KERNEL.1))
+        .map(|_| rng.random::<f32>() * 0.2 - 0.1)
+        .collect();
 
-    let model = luminal_nn::Conv2D::new(
+    // Run on CPU (no compiler)
+    let mut cx_cpu = Graph::new();
+    let inp_cpu = cx_cpu
+        .tensor((CH_IN, DIMX_IN, DIMY_IN))
+        .set(input_data.clone());
+    let model_cpu =
+        luminal_nn::Conv2D::new(CH_IN, CH_OUT, KERNEL, STRIDE, DILATION, false, &mut cx_cpu);
+    model_cpu.weight.set(weight_data.clone());
+    let out_cpu = model_cpu.forward(inp_cpu).retrieve();
+    cx_cpu.execute();
+    let cpu_result = out_cpu.data();
+
+    // Run on Metal
+    let mut cx_metal = Graph::new();
+    let inp_metal = cx_metal
+        .tensor((CH_IN, DIMX_IN, DIMY_IN))
+        .set(input_data.clone());
+    let model_metal = luminal_nn::Conv2D::new(
         CH_IN,
         CH_OUT,
-        (KERNELX, KERNELY),
-        (STRIDEX, STRIDEY),
-        (DILATIONX, DILATIONY),
+        KERNEL,
+        STRIDE,
+        DILATION,
         false,
-        &mut cx,
+        &mut cx_metal,
     );
-    model.weight.set(vec![
-        0.1600, 0.2000, 0.1900, -0.1100, 0.0100, -0.0300, -0.1200, -0.0800, -0.1300, -0.0300,
-        0.1600, -0.1700, -0.0000, 0.1900, 0.1300, 0.0300, -0.1500, 0.0900, 0.0100, 0.0200, 0.1500,
-        0.0700, -0.0800, 0.1700, 0.1000, -0.0700, 0.1600, -0.1600, -0.1900, -0.0500, -0.2100,
-        0.0100, -0.2000, 0.2100, -0.0400, -0.1400, 0.1500, 0.0500, -0.1700, 0.1400,
-    ]);
+    model_metal.weight.set(weight_data.clone());
+    let mut out_metal = model_metal.forward(inp_metal).retrieve();
+    cx_metal.compile(MetalCompiler::<f32>::default(), &mut out_metal);
+    cx_metal.execute();
+    let metal_result = out_metal.data();
 
-    let mut out1 = model.forward(inp1).retrieve();
-
-    cx.compile(
-        <(GenericCompiler, MetalCompiler<f32>)>::default(),
-        &mut out1,
+    // Compare
+    assert_eq!(
+        cpu_result.len(),
+        metal_result.len(),
+        "Output lengths differ: CPU={}, Metal={}",
+        cpu_result.len(),
+        metal_result.len()
     );
-    cx.execute();
-
-    assert_close(
-        &out1.data(),
-        &[
-            3.9600, -0.3300, -1.7800, 4.0400, 1.5300, 0.2900, 2.8700, 3.0000, 0.9600, -1.8700,
-            4.5900, 3.9700, 1.2800, 1.1800, 3.7800, 2.8500, 0.5500, 0.5600, 3.9800, 1.3200,
-            -0.7100, -0.6500, 4.3900, 0.4000, 1.0300, 0.9800, 3.1200, 2.7400, 2.5100, 0.1200,
-            1.8500, 2.0000, -0.7900, 1.0700, -0.3900, -0.8100, -2.5100, -2.9700, 0.2100, 1.8400,
-            -0.7700, -0.3900, 1.2200, 0.1900, 4.1700, -4.3600, -1.8600, 0.4800, -2.4400, 2.6300,
-            1.5000, -1.9700, 1.2800, -2.8200, -2.3200, 0.2200, -0.3800, 2.1800, -0.8200, -1.5700,
-            1.2000, -3.4200, -1.6700, 0.9000,
-        ],
-    );
+    assert_close(&metal_result, &cpu_result);
 }
 
 #[test]

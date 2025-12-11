@@ -6,8 +6,8 @@ pub mod run;
 pub mod translate;
 pub mod utils;
 
-#[cfg(test)]
-mod tests;
+#[cfg(all(test, feature = "metal"))]
+mod e2e_tests;
 
 #[cfg(feature = "cuda")]
 use itertools::Itertools;
@@ -183,8 +183,111 @@ impl Operator for CompatKernel {
 
 #[cfg(feature = "metal")]
 impl Operator for CompatKernel {
-    fn process(&mut self, _inputs: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
-        todo!()
+    fn process(&mut self, inputs: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
+        use objc2::rc::autoreleasepool;
+        use objc2_foundation::NSString;
+        use objc2_metal::{
+            MTLBuffer as MTLBufferTrait, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
+            MTLComputeCommandEncoder, MTLCreateSystemDefaultDevice, MTLDevice, MTLLibrary,
+            MTLResourceOptions, MTLSize,
+        };
+
+        autoreleasepool(|_| {
+            let dyn_vars = &unsafe { self.1.as_ref().unwrap() }.dyn_map;
+            let device = MTLCreateSystemDefaultDevice().expect("No Metal device");
+            let queue = device.newCommandQueue().expect("No command queue");
+            let command_buffer = queue.commandBuffer().expect("No command buffer");
+
+            // Compile kernel
+            let lib = device
+                .newLibraryWithSource_options_error(&NSString::from_str(&self.0.code), None)
+                .expect("Failed to compile Metal kernel");
+
+            let function = lib
+                .newFunctionWithName(&NSString::from_str("kernel_name"))
+                .expect("Failed to find kernel_name function");
+
+            let pipeline = device
+                .newComputePipelineStateWithFunction_error(&function)
+                .expect("Failed to create pipeline state");
+
+            let encoder = command_buffer
+                .computeCommandEncoder()
+                .expect("No compute encoder");
+            encoder.setComputePipelineState(&pipeline);
+
+            // Copy inputs to Metal buffers and set them
+            let mut buffer_index = 0usize;
+            let mut input_buffers = Vec::new();
+            for (input, _shape) in &inputs {
+                // Get input data as Vec<f32>
+                let input_data = input.borrowed().downcast_ref::<Vec<f32>>().unwrap();
+                let metal_buf = unsafe {
+                    use std::ffi::c_void;
+                    use std::ptr::NonNull;
+                    device
+                        .newBufferWithBytes_length_options(
+                            NonNull::new(input_data.as_ptr() as *mut c_void).unwrap(),
+                            (input_data.len() * std::mem::size_of::<f32>()) as _,
+                            MTLResourceOptions::StorageModeShared,
+                        )
+                        .expect("Failed to create input buffer")
+                };
+                unsafe {
+                    encoder.setBuffer_offset_atIndex(Some(&metal_buf), 0, buffer_index);
+                }
+                buffer_index += 1;
+                input_buffers.push(metal_buf);
+            }
+
+            // Allocate and set output buffers
+            let mut output_buffers = Vec::with_capacity(self.0.outputs.len());
+            for size_expr in &self.0.outputs {
+                let size = size_expr.exec(dyn_vars).unwrap();
+                let buffer = device
+                    .newBufferWithLength_options(
+                        (size * std::mem::size_of::<f32>()) as _,
+                        MTLResourceOptions::StorageModeShared,
+                    )
+                    .expect("Failed to allocate output buffer");
+                unsafe {
+                    encoder.setBuffer_offset_atIndex(Some(&buffer), 0, buffer_index);
+                }
+                buffer_index += 1;
+                output_buffers.push((buffer, size));
+            }
+
+            // Dispatch
+            let grid = MTLSize {
+                width: self.0.grid.0.exec(dyn_vars).unwrap() as _,
+                height: self.0.grid.1.exec(dyn_vars).unwrap() as _,
+                depth: self.0.grid.2.exec(dyn_vars).unwrap() as _,
+            };
+            let threadgroup = MTLSize {
+                width: self.0.threadblock.0.exec(dyn_vars).unwrap() as _,
+                height: self.0.threadblock.1.exec(dyn_vars).unwrap() as _,
+                depth: self.0.threadblock.2.exec(dyn_vars).unwrap() as _,
+            };
+
+            encoder.dispatchThreadgroups_threadsPerThreadgroup(grid, threadgroup);
+            encoder.endEncoding();
+
+            command_buffer.commit();
+            unsafe { command_buffer.waitUntilCompleted() };
+
+            // Copy output data back to Vec<f32> and return as Tensors
+            output_buffers
+                .into_iter()
+                .map(|(buf, size)| {
+                    let mut data = vec![0f32; size];
+                    unsafe {
+                        let ptr = buf.contents().as_ptr() as *const f32;
+                        std::ptr::copy_nonoverlapping(ptr, data.as_mut_ptr(), size);
+                    }
+                    Tensor::new(data)
+                })
+                .collect()
+        })
     }
 }
 
@@ -237,8 +340,30 @@ impl Operator for Diff {
 
 #[cfg(feature = "metal")]
 impl Operator for Diff {
-    fn process(&mut self, _inp: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
-        todo!()
+    fn process(&mut self, inp: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
+        use std::fs::File;
+        use std::io::Write;
+
+        // Get the input data as Vec<f32>
+        let data = inp[0]
+            .0
+            .borrowed()
+            .downcast_ref::<Vec<f32>>()
+            .expect("Input is not a Vec<f32>")
+            .clone();
+
+        // Write to file
+        let mut file = File::create(format!("{}.bin", self.name)).unwrap();
+        let bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(
+                data.as_ptr() as *const u8,
+                data.len() * std::mem::size_of::<f32>(),
+            )
+        };
+        file.write_all(bytes).unwrap();
+
+        // Return the input data unchanged (pass-through)
+        vec![Tensor::new(data)]
     }
 }
 

@@ -64,10 +64,8 @@ cargo test --workspace -- --nocapture
 
 ```bash
 cd crates/luminal_metal
-cargo test -- --test-threads=1
+cargo test
 ```
-
-Note: Metal tests must run single-threaded to avoid GPU resource conflicts.
 
 ### CUDA Tests (Requires NVIDIA GPU)
 

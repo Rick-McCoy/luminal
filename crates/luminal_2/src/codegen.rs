@@ -97,7 +97,11 @@ pub fn codegen(
                         gmem_mapping.len() - 1
                     };
                     let GraphTerm::GMEM { label } = graph.node_weight(*node).unwrap() else {
-                        panic!()
+                        panic!(
+                            "Expected GMEM node at {:?}, found {:?}",
+                            node,
+                            graph.node_weight(*node)
+                        )
                     };
                     gmem_names.insert(*node, label.clone());
                     kernel_meta_graph.add_edge(
@@ -459,9 +463,8 @@ fn make_kernel(
                             .iter()
                             .find(|(_, v)| v.terms.read()[0] == Term::Acc(acc_symbol))
                         else {
-                            println!("Can't find output with Acc('{acc_symbol}')");
                             display_graph(&kernel_graph);
-                            panic!();
+                            panic!("Cannot find output with Acc('{}')", acc_symbol);
                         };
                         let corresponding_output = corresponding_output.0;
                         curr = corresponding_output;
@@ -856,7 +859,7 @@ fn make_kernel(
                         kernel_lines.push(format!("{spacing}{sync_barrier};"));
                         node_to_var.insert(node, (smem, true));
                     }
-                    _ => panic!(),
+                    _ => panic!("Unexpected GraphTerm in SMEMLoad handler: {:?}", term),
                 }
             }
             GraphTerm::GMEM { .. } => {}
@@ -881,7 +884,7 @@ fn make_kernel(
                     GraphTerm::Neg => format!("-{inp}"),
                     GraphTerm::Sqrt => format!("sqrt({inp})"),
                     GraphTerm::Recip => format!("1.0 / {inp}"),
-                    _ => panic!(),
+                    _ => panic!("Unexpected unary op in codegen: {:?}", term),
                 };
                 kernel_lines.push(format!(
                     "{spacing}float {} = {expr};",
@@ -919,7 +922,7 @@ fn make_kernel(
                             format!("{inp_a} > {inp_b} ? {inp_a} : {inp_b}")
                         }
                     }
-                    _ => panic!(),
+                    _ => panic!("Unexpected binary op in codegen: {:?}", term),
                 };
                 kernel_lines.push(format!(
                     "{spacing}float {} = {expr};",

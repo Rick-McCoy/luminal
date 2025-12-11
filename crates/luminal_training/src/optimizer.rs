@@ -153,7 +153,6 @@ impl AdamState {
         tensors
     }
 
-
     /// Transfer updated states back to the original state tensors
     ///
     /// Call this after each training step along with transferring new weights.

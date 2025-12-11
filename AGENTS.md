@@ -17,7 +17,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed contribution guidelines.
 cargo test --workspace
 
 # Metal tests (macOS only)
-cd crates/luminal_metal && cargo test -- --test-threads=1
+cd crates/luminal_metal && cargo test
 
 # CUDA tests (requires NVIDIA GPU)
 cd crates/luminal_cuda && cargo test

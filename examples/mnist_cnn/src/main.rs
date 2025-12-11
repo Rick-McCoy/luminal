@@ -342,9 +342,8 @@ fn evaluate_test_set(
         cx.execute();
 
         let predictions = output.data();
-        let batch_correct =
-            (compute_batch_accuracy(&predictions, &batch_targets, batch_size) * batch_size as f32)
-                as usize;
+        let batch_correct = (compute_batch_accuracy(&predictions, &batch_targets, batch_size)
+            * batch_size as f32) as usize;
 
         total_correct += batch_correct;
         total_samples += batch_size;
