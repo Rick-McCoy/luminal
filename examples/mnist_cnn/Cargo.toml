@@ -1,12 +1,14 @@
 [package]
 name = "mnist_cnn"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Train a CNN on MNIST using luminal"
+description = "Train an MLP on MNIST using luminal with search-based optimization"
 
 [features]
-metal = ["dep:luminal_metal"]
-cuda = ["dep:luminal_cuda"]
+default = []
+metal = ["dep:luminal_metal", "luminal/metal"]
+cuda = ["dep:luminal_cuda", "luminal/cuda"]
+search = ["luminal/search"]
 
 [dependencies]
 luminal = { path = "../.." }
@@ -16,3 +18,6 @@ luminal_cuda = { path = "../../crates/luminal_cuda", optional = true }
 # MNIST data loading
 mnist = "0.6"
 rand = "0.8.5"
+
+# CLI argument parsing
+clap = { version = "4.4", features = ["derive"] }

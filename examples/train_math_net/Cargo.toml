@@ -1,16 +1,18 @@
 [package]
 name = "train_math_net"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "Train an MLP to add 4-bit numbers using luminal"
 
 [features]
-metal = ["dep:luminal_metal"]
-cuda = ["dep:luminal_cuda"]
+default = []
+metal = ["dep:luminal_metal", "luminal/metal"]
+cuda = ["dep:luminal_cuda", "luminal/cuda"]
+search = ["luminal/search"]
 
 [dependencies]
-luminal = {path="../.."}
+luminal = { path = "../.." }
+luminal_metal = { path = "../../crates/luminal_metal", optional = true }
+luminal_cuda = { path = "../../crates/luminal_cuda", optional = true }
 rand = "0.8.5"
-luminal_metal = {path="../../crates/luminal_metal", optional=true}
-luminal_cuda = {path="../../crates/luminal_cuda", optional=true}
+clap = { version = "4.4", features = ["derive"] }
