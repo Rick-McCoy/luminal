@@ -14,10 +14,29 @@
 //! ```
 //! cargo run -p luminal_2_demo --release --features cuda
 //! ```
+//!
+//! Run benchmarks:
+//! ```
+//! cargo run -p luminal_2_demo --release --features cuda -- benchmark
+//! ```
+
+mod benchmark;
 
 use luminal::prelude::*;
 
 fn main() {
+    // Check for benchmark mode
+    if std::env::args().any(|arg| arg == "benchmark") {
+        benchmark::run_benchmarks();
+        return;
+    }
+    
+    // Check for search benchmark mode
+    if std::env::args().any(|arg| arg == "search") {
+        benchmark::run_search_benchmark();
+        return;
+    }
+
     println!("╔══════════════════════════════════════════════════════════════╗");
     println!("║          luminal_2 Search-Based CUDA Compiler Demo           ║");
     println!("╚══════════════════════════════════════════════════════════════╝\n");

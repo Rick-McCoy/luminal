@@ -45,18 +45,24 @@ const WARMUP_TRIALS: usize = 0;
 #[cfg(any(feature = "cuda", feature = "metal"))]
 const TRIALS: usize = 1;
 #[cfg(any(feature = "cuda", feature = "metal"))]
-const MAX_SEARCHED_GRAPHS: usize = 1_000;
+const MAX_SEARCHED_GRAPHS: usize = 10_000;
 const MAX_CYCLES: usize = 1;
+// Patterns that should not appear in extracted graphs.
+// - Intermediate transformation patterns (TileLoop, MergeLoops) should be fully
+//   propagated by ir-prop saturation before extraction.
+// - Internal egglog constructs (loop_level, vec-of, set-of) are helpers, not IR.
+// - MReplace should be simplified by expr saturation.
+// - TiledMatmulInputA/B are intermediates for TCMatmul pattern matching.
 #[allow(dead_code)]
 const INVALID_IR: &[&str] = &[
-    "SwapLoops",
+    // Intermediate transformation patterns (should be propagated out)
     "TileLoop",
-    "UnpadLoop",
-    "MReplace",
     "MergeLoops",
+    "MReplace",
+    // Tensor core intermediate patterns
     "TiledMatmulInputA",
     "TiledMatmulInputB",
-    "TiledMatmulAcc",
+    // Internal egglog constructs
     "loop_level",
     "vec-of",
     "set-of",
@@ -559,6 +565,10 @@ pub fn search(
                 best_time = us;
                 best_graph = Some(graph);
                 fastest = kernel_string;
+                // Early termination: stop if we found a very fast kernel (< 50µs)
+                if us < 50 {
+                    break 'trajectory_loop;
+                }
             }
         }
     }

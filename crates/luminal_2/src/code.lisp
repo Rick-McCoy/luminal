@@ -88,7 +88,7 @@
 
    	; propogation patterns
    	(SwapLoops IR i64) ; Swap two loops, identified by the inner loop level
-   	(TileLoop IR i64) ; Tile a loop, identified by it's loop level
+   	(TileLoop IR i64 i64) ; Tile a loop, identified by loop level and tile size
     (MergeLoops IR i64) ; Merge loops, identified by the inner loop level
     (Fused IR ESet) ; Says that we have previously fused loopout -> loopins here
 
@@ -254,19 +254,43 @@
 	:ruleset fusion
 )
 
-; Tiling
+; Tiling - tile by 4
 (rule
 	(
 		(= ?e (LoopOut ?body (MNum ?range) ?stride))
 		(= ?ll (loop_level ?e))
-		(> ?range 8) ; range must be larger than 8
-		(= (% ?range 8) 0) ; range must be divisible by 8
+		(> ?range 4)
+		(= (% ?range 4) 0)
 	)
 	(
 		(union ?e
 			(LoopOut
 				(LoopOut
-					(TileLoop ?body ?ll)
+					(TileLoop ?body ?ll 4)
+					(MNum 4)
+					?stride
+				)
+				(MNum (/ ?range 4))
+				(MReplace ?stride (MVar "z") (MMul (MVar "z") (MNum 4)))
+			)
+		)
+	)
+	:ruleset ir
+)
+
+; Tiling - tile by 8
+(rule
+	(
+		(= ?e (LoopOut ?body (MNum ?range) ?stride))
+		(= ?ll (loop_level ?e))
+		(> ?range 8)
+		(= (% ?range 8) 0)
+	)
+	(
+		(union ?e
+			(LoopOut
+				(LoopOut
+					(TileLoop ?body ?ll 8)
 					(MNum 8)
 					?stride
 				)
@@ -277,10 +301,82 @@
 	)
 	:ruleset ir
 )
+
+; Tiling - tile by 16
+(rule
+	(
+		(= ?e (LoopOut ?body (MNum ?range) ?stride))
+		(= ?ll (loop_level ?e))
+		(> ?range 16)
+		(= (% ?range 16) 0)
+	)
+	(
+		(union ?e
+			(LoopOut
+				(LoopOut
+					(TileLoop ?body ?ll 16)
+					(MNum 16)
+					?stride
+				)
+				(MNum (/ ?range 16))
+				(MReplace ?stride (MVar "z") (MMul (MVar "z") (MNum 16)))
+			)
+		)
+	)
+	:ruleset ir
+)
+
+; Tiling - tile by 32
+(rule
+	(
+		(= ?e (LoopOut ?body (MNum ?range) ?stride))
+		(= ?ll (loop_level ?e))
+		(> ?range 32)
+		(= (% ?range 32) 0)
+	)
+	(
+		(union ?e
+			(LoopOut
+				(LoopOut
+					(TileLoop ?body ?ll 32)
+					(MNum 32)
+					?stride
+				)
+				(MNum (/ ?range 32))
+				(MReplace ?stride (MVar "z") (MMul (MVar "z") (MNum 32)))
+			)
+		)
+	)
+	:ruleset ir
+)
+
+; TileLoop propagation - when TileLoop reaches the matching LoopIn, expand to nested loops
+; Tile by 4
 (rule
 	(
 		(= ?loop (LoopIn ?body (MNum ?range) ?stride))
-		(= ?e (TileLoop ?loop ?ll))
+		(= ?e (TileLoop ?loop ?ll 4))
+		(= ?ll (loop_level ?loop))
+	)
+	(
+		(union ?e
+			(LoopIn
+				(LoopIn ?body
+					(MNum (/ ?range 4))
+					(MReplace ?stride (MVar "z") (MMul (MVar "z") (MNum 4)))
+				)
+				(MNum 4)
+				?stride
+			)
+		)
+	)
+	:ruleset ir-prop
+)
+; Tile by 8
+(rule
+	(
+		(= ?loop (LoopIn ?body (MNum ?range) ?stride))
+		(= ?e (TileLoop ?loop ?ll 8))
 		(= ?ll (loop_level ?loop))
 	)
 	(
@@ -297,30 +393,74 @@
 	)
 	:ruleset ir-prop
 )
+; Tile by 16
+(rule
+	(
+		(= ?loop (LoopIn ?body (MNum ?range) ?stride))
+		(= ?e (TileLoop ?loop ?ll 16))
+		(= ?ll (loop_level ?loop))
+	)
+	(
+		(union ?e
+			(LoopIn
+				(LoopIn ?body
+					(MNum (/ ?range 16))
+					(MReplace ?stride (MVar "z") (MMul (MVar "z") (MNum 16)))
+				)
+				(MNum 16)
+				?stride
+			)
+		)
+	)
+	:ruleset ir-prop
+)
+; Tile by 32
+(rule
+	(
+		(= ?loop (LoopIn ?body (MNum ?range) ?stride))
+		(= ?e (TileLoop ?loop ?ll 32))
+		(= ?ll (loop_level ?loop))
+	)
+	(
+		(union ?e
+			(LoopIn
+				(LoopIn ?body
+					(MNum (/ ?range 32))
+					(MReplace ?stride (MVar "z") (MMul (MVar "z") (MNum 32)))
+				)
+				(MNum 32)
+				?stride
+			)
+		)
+	)
+	:ruleset ir-prop
+)
+
+; TileLoop propagation through higher-level loops (pass through)
 (rule
 	(
 		(= ?x (LoopIn ?body ?range ?stride))
-		(= ?e (TileLoop ?x ?ll))
+		(= ?e (TileLoop ?x ?ll ?ts))
 		(> (loop_level ?x) ?ll)
 	)
 	(
-		(union ?e (LoopIn (TileLoop ?body ?ll) ?range ?stride))
+		(union ?e (LoopIn (TileLoop ?body ?ll ?ts) ?range ?stride))
 	)
 	:ruleset ir-prop
 )
 (rewrite
-	(TileLoop (LoopOut ?body ?range ?stride) ?ll)
-	(LoopOut (TileLoop ?body ?ll) ?range ?stride)
+	(TileLoop (LoopOut ?body ?range ?stride) ?ll ?ts)
+	(LoopOut (TileLoop ?body ?ll ?ts) ?range ?stride)
 	:ruleset ir-prop
 )
 (rewrite
-	(TileLoop (Unary ?un ?body) ?ll)
-	(Unary ?un (TileLoop ?body ?ll))
+	(TileLoop (Unary ?un ?body) ?ll ?ts)
+	(Unary ?un (TileLoop ?body ?ll ?ts))
 	:ruleset ir-prop
 )
 (rewrite
-	(TileLoop (Binary ?bin ?bodyA ?bodyB) ?ll)
-	(Binary ?bin (TileLoop ?bodyA ?ll) (TileLoop ?bodyB ?ll))
+	(TileLoop (Binary ?bin ?bodyA ?bodyB) ?ll ?ts)
+	(Binary ?bin (TileLoop ?bodyA ?ll ?ts) (TileLoop ?bodyB ?ll ?ts))
 	:ruleset ir-prop
 )
 
@@ -543,9 +683,8 @@
 (run-schedule
 	(saturate expr)
 	(saturate ir-prop)
-	(let-scheduler bo (back-off))
-	(repeat 1
-		(run-with bo ir)
+	(seq
+		(run ir)
 		(saturate ir-prop)
 		(saturate expr)
 		(saturate fusion)
@@ -553,6 +692,7 @@
 	(saturate ir-prop)
 	(saturate tc)
 	(saturate ir-prop)
+	(saturate expr) ; Final pass to simplify MReplace and other expressions
 )
 
 ;(print-size)
