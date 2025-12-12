@@ -2,7 +2,7 @@
 
 This document provides a step-by-step implementation guide to complete the search-based compilation system and realize Luminal's full potential.
 
-**Last Updated:** 2025-12-11 — Phases 0-2.5 complete. All tests passing.
+**Last Updated:** 2025-12-12 — Phases 0-3 complete.
 
 ### Quick Status
 
@@ -12,8 +12,9 @@ This document provides a step-by-step implementation guide to complete the searc
 | 1 | Fix E2E tests | ✅ Complete |
 | 2 | Metal `todo!()` implementations | ✅ Complete |
 | 2.5 | Address test coverage gaps | ✅ Complete |
-| **3** | **CUDA tensor core support** | ⚠️ **Next** |
-| 4-10 | Remaining phases | Not started |
+| 3 | CUDA warp-cooperative matmul | ✅ Complete |
+| 4 | Expand search space | Not started |
+| 5-10 | Remaining phases | Not started |
 
 ---
 
@@ -24,7 +25,7 @@ This document provides a step-by-step implementation guide to complete the searc
 3. [Phase 1: Fix Broken E2E Tests](#phase-1-fix-broken-e2e-tests) ✅ COMPLETE
 4. [Phase 2: Complete Metal `todo!()` Implementations](#phase-2-complete-metal-todo-implementations) ✅ COMPLETE
 5. [Phase 2.5: Address Test Coverage Gaps](#phase-25-address-test-coverage-gaps) ✅ COMPLETE
-6. [Phase 3: CUDA Tensor Core Support](#phase-3-cuda-tensor-core-support)
+6. [Phase 3: CUDA Warp-Cooperative Matmul](#phase-3-cuda-warp-cooperative-matmul--complete) ✅ COMPLETE
 7. [Phase 4: Expand Search Space](#phase-4-expand-search-space)
 8. [Phase 5: Unify 1.0 and 2.0 Architectures](#phase-5-unify-10-and-20-architectures)
 9. [Phase 6: Complete Training Infrastructure](#phase-6-complete-training-infrastructure)
@@ -32,12 +33,13 @@ This document provides a step-by-step implementation guide to complete the searc
 11. [Phase 8: ROCm Backend](#phase-8-rocm-backend)
 12. [Phase 9: Distributed Computing](#phase-9-distributed-computing)
 13. [Phase 10: Python Bindings](#phase-10-python-bindings)
+14. [Appendix D: luminal_2 Demo](#appendix-d-luminal_2-demo)
 
 ---
 
 ## Current State Assessment
 
-### Test Summary (as of 2025-12-11)
+### Test Summary (as of 2025-12-12)
 
 | Crate | Tests | Status |
 |-------|-------|--------|
@@ -45,8 +47,9 @@ This document provides a step-by-step implementation guide to complete the searc
 | `luminal_nn` | 31 | ✅ All pass |
 | `luminal_training` | 18 | ✅ All pass |
 | `luminal_metal` | 205 | ✅ All pass |
-| `luminal_2` | 27 | ✅ All pass |
-| `luminal_cuda` | — | Not tested (requires GPU) |
+| `luminal_2` (Metal) | 27 | ✅ All pass |
+| `luminal_2` (CUDA) | 32 | ✅ All pass (9 CUDA-specific) |
+| `luminal_cuda` | 168/199 | ⚠️ 31 pre-existing failures (fp16, norm, conv2d) |
 
 ### What Actually Works
 
@@ -69,17 +72,18 @@ After auditing and fixing the codebase, here's the current state:
 | Metal conv2d tests | ✅ **Fixed** | CPU comparison pattern |
 | Metal fp16 sum tests | ✅ **Fixed** | Compare against dfdx fp32 |
 
-### Test Coverage Gaps (Identified 2025-12-11)
+### Test Coverage Gaps (Updated 2025-12-12)
 
 | Module | Has Tests? | Coverage Gap |
 |--------|------------|--------------|
-| `lib.rs` (CompatKernel, Diff) | ❌ | No tests for CompatKernel/Diff operators |
-| `run.rs` | ❌ | No tests for run_graph, compile_kernels, assign_buffers |
+| `lib.rs` (CompatKernel, Diff) | ✅ | `test_compat_kernel_cuda` added |
+| `run.rs` | ✅ | Runtime tests exercise `run_graph`, `compile_kernels`, `assign_buffers` |
 | `extract.rs` (search) | ❌ | No unit tests for search function |
 | `utils.rs` | ❌ | No tests |
 | `codegen.rs` | ✅ | 6 tests |
 | `translate.rs` | ✅ | 17 tests |
 | `e2e_tests.rs` | ✅ | 4 tests |
+| `cuda_tests.rs` | ✅ | 9 CUDA-specific tests (codegen, runtime, matmul, CompatKernel) |
 
 ### CI Coverage Gap
 
@@ -156,7 +160,7 @@ Investigation revealed the tests were failing due to **stale test data**, not ke
 ### 0.3 Verification
 
 ```bash
-cargo test -p luminal_metal -- --test-threads=1  # All 205 tests pass
+cargo test -p luminal_metal  # All 205 tests pass
 ```
 
 - [x] `cargo test -p luminal_metal test_conv2d` passes
@@ -389,16 +393,16 @@ Several `panic!()` calls in `codegen.rs` lack context. Replace with descriptive 
 
 ---
 
-## Phase 3: CUDA Tensor Core Support
+## Phase 3: CUDA Warp-Cooperative Matmul ✅ COMPLETE
 
-**Priority:** 🟠 High - Significant performance opportunity
+**Status:** ✅ **COMPLETE**
 
-### 3.1 Problem Statement
+### 3.1 Problem Statement (Resolved)
 
-The `TCMatmul` GraphTerm explicitly skips CUDA:
+The `TCMatmul` GraphTerm previously skipped CUDA with `return None`:
 
 ```rust
-// Location: crates/luminal_2/src/codegen.rs:936-940
+// OLD: crates/luminal_2/src/codegen.rs:936-940
 GraphTerm::TCMatmul { ... } => {
     if cfg!(feature = "cuda") {
         return None;  // CUDA build: skip / fallback
@@ -407,127 +411,138 @@ GraphTerm::TCMatmul { ... } => {
 }
 ```
 
-### 3.2 CUDA WMMA Background
+### 3.2 Solution Implemented
 
-NVIDIA's Warp Matrix Multiply-Accumulate (WMMA) API:
-- Available on Volta+ (sm_70 and later)
-- Uses tensor cores for 16x16x16 or 8x8x8 matrix tiles
-- Typical usage: FP16 inputs, FP32 accumulator
+Implemented a **warp-cooperative 8x8 matrix multiply** for CUDA that matches the existing egglog tile pattern used by Metal's simdgroup operations.
 
-### 3.3 Implementation
+**Key insight:** The egglog rules in `code.lisp` generate 8x8 tile patterns (matching Metal's `simdgroup_float8x8`). NVIDIA's WMMA API uses larger tiles (16x16x16 for fp16), so we implemented a warp-cooperative approach using standard CUDA:
 
-Replace the CUDA skip with WMMA code generation:
+- Each warp (32 threads) computes one 8x8 = 64 element output tile
+- Each thread computes 2 output elements (64 / 32 = 2)
+- Uses `__syncwarp()` for warp-level synchronization
+- Uses unrolled loops for the K-dimension accumulation
+
+### 3.3 Implementation Details
+
+**Code location:** `crates/luminal_2/src/codegen.rs` (TCMatmul handler)
+
+The implementation uses a match on `GPUArch` to generate architecture-specific code:
 
 ```rust
-GraphTerm::TCMatmul {
-    a_k_stride,
-    b_k_stride,
-    a_inner_stride,
-    b_inner_stride,
-    c_inner_stride,
-    k_outer_loops,
-} => {
-    #[cfg(feature = "cuda")]
-    {
-        use itertools::Itertools;
-        
-        let mut srcs = kernel_graph
-            .edges_directed(node, Direction::Incoming)
-            .sorted_by_key(|e| e.id())
-            .map(|e| e.source());
-        let (src_a, src_a_ptr) = node_to_var[&srcs.next().unwrap()];
-        let (src_b, src_b_ptr) = node_to_var[&srcs.next().unwrap()];
-        let dest = kernel_graph
-            .neighbors_directed(node, Direction::Outgoing)
-            .next()
-            .unwrap();
-        let (dest, dest_ptr) = node_to_var[&dest];
-        
-        assert!(src_a_ptr && src_b_ptr && dest_ptr, "TCMatmul requires pointer inputs");
-        
-        kernel_lines.push(format!(
-            r#"
-// CUDA Tensor Core Matmul via WMMA
-#include <mma.h>
-using namespace nvcuda;
-{{
-    wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> a_frag;
-    wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::row_major> b_frag;
-    wmma::fragment<wmma::accumulator, 16, 16, 16, float> c_frag;
-    wmma::fill_fragment(c_frag, 0.0f);
-    
-    for (int k_tile = 0; k_tile < {k_loops}; k_tile++) {{
-        // Load A and B tiles
-        wmma::load_matrix_sync(a_frag, (half*)({a} + {a_k}), {a_ld});
-        wmma::load_matrix_sync(b_frag, (half*)({b} + {b_k}), {b_ld});
-        
-        // Multiply-accumulate
-        wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
-    }}
-    
-    // Store result
-    wmma::store_matrix_sync({c}, c_frag, {c_ld}, wmma::mem_row_major);
-}}
-"#,
-            k_loops = k_outer_loops.to_kernel(),
-            a = var_to_char(src_a),
-            b = var_to_char(src_b),
-            c = var_to_char(dest),
-            a_k = a_k_stride.to_kernel().replace("const_z", "k_tile"),
-            b_k = b_k_stride.to_kernel().replace("const_z", "k_tile"),
-            a_ld = a_inner_stride.substitute('z', 1).to_kernel(),
-            b_ld = b_inner_stride.substitute('z', 1).to_kernel(),
-            c_ld = c_inner_stride.substitute('z', 1).to_kernel(),
-        ));
-        
-        node_to_var.insert(node, (dest, true));
+match arch {
+    GPUArch::CUDA => {
+        // Warp-cooperative 8x8 matmul
+        // Thread lane (0-31) maps to output element
+        // lane 0-7: row 0, cols 0-7 and row 4, cols 0-7
+        // Each thread accumulates dot product for 2 elements
     }
-    
-    #[cfg(feature = "metal")]
-    {
-        // Existing simdgroup implementation...
+    GPUArch::Metal(_) => {
+        // Existing simdgroup_float8x8 implementation
     }
 }
 ```
 
-### 3.4 NVRTC Compilation Options
+**Thread mapping (32 threads → 64 outputs):**
+- `row0 = lane / 8` (rows 0-3)
+- `col = lane % 8` (cols 0-7)
+- `row1 = row0 + 4` (rows 4-7)
+- Each thread accumulates `C[row0,col]` and `C[row1,col]`
 
-Update the CUDA compilation to support tensor cores:
+### 3.4 NVRTC Compilation Updates
+
+Updated compilation options for warp intrinsics:
 
 ```rust
-// In run.rs or wherever NVRTC is called
+// crates/luminal_2/src/run.rs
 CompileOptions {
     include_paths: vec![
         "/usr/include".into(),
         "/usr/local/cuda/include".into(),
     ],
     options: vec![
-        "--gpu-architecture=sm_80".into(),  // Ampere+
+        "--gpu-architecture=sm_75".into(), // Turing+ for warp intrinsics
+        "--relocatable-device-code=false".into(),
         "--std=c++17".into(),
-        "-DCUDA_HAS_WMMA".into(),
     ],
     ..Default::default()
 }
 ```
 
-### 3.5 Testing
-
-```rust
-#[cfg(feature = "cuda")]
-#[test]
-fn test_tcmatmul_cuda() {
-    let mut cx = Graph::new();
-    
-    // 16x16 matmul (minimum tensor core size)
-    let a = cx.tensor((16, 16)).set(vec![1.0f32; 256]);
-    let b = cx.tensor((16, 16)).set(vec![1.0f32; 256]);
-    let c = a.matmul(b).retrieve();
-    
-    // Compile through luminal_2
-    let (meta_graph, _, _) = translate_graph(&cx);
-    // ... run search, verify TCMatmul is used and results are correct
+Also added CUDA preamble with helper functions:
+```cuda
+__device__ __forceinline__ float __mod(float a, float b) {
+    return a - b * floorf(a / b);
 }
 ```
+
+### 3.5 cudarc Version Update
+
+**Problem:** cudarc 0.16.6 used `cuCtxCreate_v4` (CUDA 12.4+ driver API), but the system had CUDA 12.2 (driver 535.x).
+
+**Solution:** Upgraded to cudarc 0.18.1 which works with CUDA 12.2:
+
+```toml
+# Cargo.toml changes
+cudarc = { version = "0.18.1", features = ["f16", "cuda-12020"] }
+```
+
+Also added `/usr/local/cuda/include` to NVRTC include paths for `cuda_fp16.h`.
+
+### 3.6 Tests Added ✅
+
+New test file: `crates/luminal_2/src/cuda_tests.rs` (9 tests)
+
+| Test | Description | Status |
+|------|-------------|--------|
+| `test_cuda_add_codegen` | Tests add operation codegen | ✅ Uses `.expect()` |
+| `test_cuda_sum_codegen` | Tests reduction codegen | ✅ Uses `.expect()` |
+| `test_cuda_kernel_structure` | Validates CUDA kernel structure | ✅ Uses `.expect()` |
+| `test_cuda_add_execution` | Runtime add with numerical verification | ✅ Full pipeline |
+| `test_cuda_mul_execution` | Runtime mul with numerical verification | ✅ Full pipeline |
+| `test_cuda_matmul_8x8_codegen` | Tests 8x8 matmul codegen | ✅ Uses `.expect()` |
+| `test_cuda_matmul_16x16_codegen` | Tests 16x16 matmul codegen | ✅ Uses `.expect()` |
+| `test_cuda_matmul_8x8_execution` | Runtime matmul with verification | ✅ Full pipeline |
+| `test_compat_kernel_cuda` | Custom kernel injection | ✅ Uses `CudaCompiler` |
+
+**Helper functions:**
+- `get_sorted_gmem_nodes()` — Get GMEM nodes sorted by mapping index
+- `build_input_buffers()` — Create GPU buffers for tensor/constant inputs
+- `build_inputs_map()` — Build input mapping for `run_graph`
+
+### 3.7 Remaining Work
+
+All critical items complete. Optional future work:
+- Add more compat kernel tests (different input counts, shared memory)
+- Add Diff operator tests for CUDA debugging workflow
+- Investigate the 31 pre-existing `luminal_cuda` failures (separate from luminal_2)
+
+### 3.8 Future Enhancement: True Tensor Cores (WMMA)
+
+For true tensor core acceleration with WMMA, the egglog rules would need modification to generate 16x16 tile patterns instead of 8x8. This would involve:
+
+1. Add new rules in `code.lisp` that divide by 16 instead of 8
+2. Condition the rules on target architecture
+3. Implement WMMA codegen for the 16x16 pattern
+
+This is left for a future optimization pass.
+
+### 3.9 Verification Checklist
+
+**All items complete:**
+- [x] TCMatmul generates valid CUDA code (no more `return None`)
+- [x] CUDA preamble includes helper functions (`__mod`)
+- [x] NVRTC compilation uses sm_75 for warp intrinsics
+- [x] `cuda_tests.rs` added with 9 CUDA-specific tests:
+  - 3 codegen tests (`add`, `sum`, `kernel_structure`)
+  - 3 runtime execution tests (`add`, `mul`, `matmul_8x8` with numerical verification)
+  - 2 matmul codegen tests (`8x8`, `16x16`)
+  - 1 CompatKernel test (`test_compat_kernel_cuda`)
+- [x] Module declaration added to `lib.rs`
+- [x] cudarc upgraded to 0.18.1 for CUDA 12.2 compatibility
+- [x] Tests strengthened to fail when codegen returns `None` (using `.expect()`)
+- [x] Helper functions cleaned up and made consistent (`get_sorted_gmem_nodes`, `build_input_buffers`, `build_inputs_map`)
+
+**Note:** The 31 `luminal_cuda` test failures are pre-existing issues in the 1.0 backend, not related to `luminal_2`. They include fp16 precision issues, norm/mean kernel bugs, and NVRTC compilation errors with half precision types.
 
 ---
 
@@ -784,8 +799,8 @@ print(c.numpy())
 | 1 - Fix E2E Tests | 🔴 Critical | Low | Critical | ✅ Complete |
 | 2 - Metal `todo!()` Impls | 🟡 Medium | Medium | Medium | ✅ Complete |
 | 2.5 - Test Coverage Gaps | 🟡 Medium | Low | Medium | ✅ Complete |
-| **3 - CUDA Tensor Cores** | 🟠 High | Medium | High | ⚠️ **Next** |
-| 4 - Expand Search | 🟡 Medium | Medium | High | Not Started |
+| 3 - CUDA Warp Matmul | 🟠 High | Medium | High | ✅ Complete |
+| **4 - Expand Search** | 🟡 Medium | Medium | High | Not Started |
 | 5 - Unify Arch | 🟢 Lower | High | Medium | Not Started |
 | 6 - Training | 🟡 Medium | Medium | High | Not Started |
 | 7 - Benchmarks | 🟢 Lower | Low | Medium | Not Started |
@@ -794,9 +809,9 @@ print(c.numpy())
 | 10 - Python | 🔵 Future | Medium | High | Not Started |
 
 **Recommended Next Steps:**
-1. Phase 3 (CUDA tensor cores) — high performance impact
-2. Phase 4 (expand search space) — improves optimization quality
-3. Phase 6 (training infrastructure) — can be parallelized with above
+1. **Phase 4 (expand search space)** — Enable more loop transformations, improve optimization quality
+2. Phase 6 (training infrastructure) — Can be parallelized with above
+3. Phase 7 (benchmarking) — Validate performance against PyTorch baselines
 
 ---
 
@@ -804,13 +819,16 @@ print(c.numpy())
 
 ```bash
 # All Metal backend tests (205 tests) - requires macOS with Metal GPU
-cd crates/luminal_metal && cargo test -- --test-threads=1
+cd crates/luminal_metal && cargo test
 
 # All luminal_2 Metal tests (27 tests)
 cd crates/luminal_2 && cargo test --features metal
 
-# All luminal_2 CUDA tests (requires NVIDIA GPU)
+# All luminal_2 CUDA tests (requires NVIDIA GPU with CUDA 12.x)
 cd crates/luminal_2 && cargo test --features cuda
+
+# luminal_cuda tests (requires NVIDIA GPU)
+cd crates/luminal_cuda && cargo test -- --test-threads=1
 
 # All workspace tests (CPU-only crates)
 cargo test --workspace
@@ -848,9 +866,12 @@ cd crates/luminal_cuda && cargo fmt --all && cargo clippy --all-targets -- -D wa
 | translate_graph | `crates/luminal_2/src/translate.rs` |
 | search | `crates/luminal_2/src/extract.rs:357` |
 | Egglog rules | `crates/luminal_2/src/code.lisp` |
-| E2E tests | `crates/luminal_2/src/e2e_tests.rs` |
+| E2E tests (Metal) | `crates/luminal_2/src/e2e_tests.rs` |
+| CUDA tests | `crates/luminal_2/src/cuda_tests.rs` (9 tests: codegen, runtime, matmul, CompatKernel) |
 | Translation tests | `crates/luminal_2/src/translate.rs` (17 tests) |
 | Codegen tests | `crates/luminal_2/src/codegen.rs` (6 tests) |
+| TCMatmul (CUDA) | `crates/luminal_2/src/codegen.rs` (warp-coop 8x8) |
+| TCMatmul (Metal) | `crates/luminal_2/src/codegen.rs` (simdgroup 8x8) |
 
 ### luminal_metal
 
@@ -870,3 +891,96 @@ cd crates/luminal_cuda && cargo fmt --all && cargo clippy --all-targets -- -D wa
 | Core library | `src/` |
 | NN modules | `crates/luminal_nn/src/` |
 | Training | `crates/luminal_training/src/` |
+
+---
+
+## Appendix D: luminal_2 Demo
+
+A working demo showcasing `luminal_2`'s CUDA capabilities is available at `examples/luminal_2_demo/`.
+
+### Running the Demo
+
+```bash
+# CUDA backend (requires NVIDIA GPU)
+cargo run -p luminal_2_demo --release --features cuda
+
+# Metal backend (macOS only)
+cargo run -p luminal_2_demo --release --features metal
+```
+
+### What the Demo Shows
+
+| Demo | Description |
+|------|-------------|
+| **Demo 1: Search-Based Compilation** | Full pipeline: Luminal graph → IR translation → CUDA codegen → GPU execution with numerical verification |
+| **Demo 2: Custom Kernel Injection** | Using `custom_kernel` API to inject a hand-written GELU CUDA kernel into the graph |
+| **Demo 3: Matrix Multiply** | 8×8 matmul through the search pipeline (demonstrates warp-cooperative pattern) |
+| **Demo 4: MLP Inference** | 2-layer network showing how complex graphs decompose into multiple fused CUDA kernels |
+
+### Sample Output
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║          luminal_2 Search-Based CUDA Compiler Demo           ║
+╚══════════════════════════════════════════════════════════════╝
+
+═══ Demo 1: Search-Based Compilation Pipeline ═══
+Step 1: Created Luminal graph for C = A + B * 2
+Step 2: Translated to meta-graph with 1 subgraphs
+Step 3: Stitched into unified graph with 11 nodes
+Step 4: Generated 2 CUDA kernel(s)
+Step 5: Executed on GPU in 79µs
+        ✓ Verified correct!
+
+═══ Demo 2: Custom CUDA Kernel Injection ═══
+Input:  [-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0]
+Output: [-0.045, -0.159, -0.154, 0.0, 0.346, 0.841, 1.400, 1.955]
+        ✓ Custom GELU kernel verified!
+
+═══ Demo 4: MLP Inference with Search Optimization ═══
+Codegen: 11 CUDA kernel(s) generated
+✓ All kernels compiled successfully with NVRTC
+
+✅ All demos completed successfully!
+```
+
+### Key APIs Demonstrated
+
+**Custom kernel injection:**
+```rust
+use luminal_2::{custom_kernel, Kernel};
+
+let kernel = Kernel {
+    code: r#"extern "C" __global__ void kernel_name(float* in, float* out) {
+        int idx = blockIdx.x * blockDim.x + threadIdx.x;
+        out[idx] = in[idx] * 2.0f;
+    }"#.to_string(),
+    grid: (8.into(), 1.into(), 1.into()),
+    threadblock: (1.into(), 1.into(), 1.into()),
+    smem: 0.into(),
+    outputs: vec![8.into()],
+};
+
+let output = custom_kernel(&[input], kernel, 8, &mut cx);
+```
+
+**Search-based compilation:**
+```rust
+use luminal_2::{
+    codegen::{codegen, stitch_meta_graph_together},
+    translate::translate_graph,
+    GPUArch,
+};
+
+let (meta_graph, _, _) = translate_graph(&cx);
+let (stitched, _) = stitch_meta_graph_together(meta_graph);
+let (kernels, gmem_map) = codegen(stitched, GPUArch::CUDA, &cx.dyn_map).unwrap();
+```
+
+### Files
+
+| File | Description |
+|------|-------------|
+| `examples/luminal_2_demo/Cargo.toml` | Dependencies and feature flags |
+| `examples/luminal_2_demo/src/main.rs` | Demo implementation (565 lines) |
+| `examples/luminal_2_demo/README.md` | Standalone documentation |

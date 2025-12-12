@@ -30,8 +30,6 @@ use {
 
 #[cfg(any(feature = "cuda", feature = "metal"))]
 use crate::Buffer;
-#[cfg(feature = "cuda")]
-use crate::GraphTerm;
 use crate::Kernel;
 
 pub fn assign_buffers(
@@ -110,11 +108,11 @@ pub fn compile_kernels(
             let ptx = cudarc::nvrtc::compile_ptx_with_opts(
                 &kernel.code,
                 CompileOptions {
-                    include_paths: vec!["/usr/include".into()],
+                    include_paths: vec!["/usr/include".into(), "/usr/local/cuda/include".into()],
                     options: vec![
-                        "--gpu-architecture=compute_75".into(),
+                        "--gpu-architecture=sm_75".into(), // Turing+ for warp intrinsics
                         "--relocatable-device-code=false".into(),
-                        "--std=c++14".into(),
+                        "--std=c++17".into(),
                     ],
                     ..Default::default()
                 },
@@ -170,7 +168,7 @@ pub fn run_graph(
         .node_indices()
         .find(|n| kernels[*n].code == "Inputs")
         .unwrap();
-    for (i, node) in toposort(kernels, None).unwrap().into_iter().enumerate() {
+    for node in toposort(kernels, None).unwrap() {
         let kernel = &kernels[node];
         if kernel.code == "Inputs" {
             // Inputs should already be in the buffer map
@@ -230,33 +228,43 @@ pub fn run_graph(
         } else {
             // println!("{i}: {}", kernel.code);
             let mut builder = stream.launch_builder(&compiled_kernels[&kernel.code]);
-            // set inputs
-            for (input, input_index) in kernels
+
+            // Collect all buffer indices first to avoid borrow conflicts
+            let input_info: Vec<(bool, usize)> = kernels
                 .edges_directed(node, Direction::Incoming)
                 .sorted_by_key(|n| n.weight().1)
-                .map(|n| (n.source(), n.weight().0))
-            {
-                if input == input_node {
-                    // println!("INPUT: {}", inputs[&input_index].0.len());
-                    builder.arg(inputs[&input_index].0);
+                .map(|n| {
+                    let input = n.source();
+                    let input_index = n.weight().0;
+                    if input == input_node {
+                        (true, input_index) // true = from inputs map
+                    } else {
+                        (false, intermediate_buffer_map[&input][input_index]) // false = from intermediate
+                    }
+                })
+                .collect();
+
+            let output_indices: Vec<usize> = (0..kernel.outputs.len())
+                .map(|o| intermediate_buffer_map[&node][o])
+                .collect();
+
+            // Get raw pointer to avoid borrow conflicts between inputs and outputs
+            let buf_ptr = intermediate_buffers.as_mut_ptr();
+
+            // Set inputs
+            for (is_input, idx) in &input_info {
+                if *is_input {
+                    builder.arg(inputs[idx].0);
                 } else {
-                    // println!(
-                    //     "INPUT: {}",
-                    //     intermediate_buffers[intermediate_buffer_map[&input][input_index]].len()
-                    // );
-                    builder
-                        .arg(&intermediate_buffers[intermediate_buffer_map[&input][input_index]]);
+                    let buf = unsafe { &*buf_ptr.add(*idx) };
+                    builder.arg(buf);
                 }
             }
-            // set output
-            // println!("Grid: {:?}", kernel.grid);
-            // println!("Threadblock: {:?}", kernel.threadblock);
-            // println!("OUTPUTS: {:?}", kernel.outputs);
-            let mut output_views = (0..kernel.outputs.len())
-                .map(|o| intermediate_buffers[intermediate_buffer_map[&node][o]].as_view_mut())
-                .collect_vec();
-            for o in &mut output_views {
-                builder.arg(o);
+
+            // Set outputs
+            for idx in &output_indices {
+                let buf = unsafe { &mut *buf_ptr.add(*idx) };
+                builder.arg(buf);
             }
             // set dynamic dimensions
             for (_, v) in dyn_vars.iter().sorted_by_key(|(k, _)| **k) {

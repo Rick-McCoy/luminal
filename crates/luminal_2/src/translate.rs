@@ -639,7 +639,9 @@ mod tests {
     #[test]
     fn test_unary_sin_translation() {
         let mut cx = Graph::new();
-        let a = cx.tensor(3).set([0., 1.5708, 3.14159]);
+        let a = cx
+            .tensor(3)
+            .set([0., std::f32::consts::FRAC_PI_2, std::f32::consts::PI]);
         let _b = a.sin().retrieve();
 
         let (meta_graph, _global_map, _inits) = translate_graph(&cx);

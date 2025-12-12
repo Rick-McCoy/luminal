@@ -236,11 +236,16 @@ pub fn codegen(
                     .collect_vec();
                 *input_string.last_mut().unwrap() = input_string.last().unwrap().replace(",", " ");
                 format!(
-                    "extern \"C\" __global__ void kernel_name(
-\t{}
+                    r#"// CUDA helper functions
+__device__ __forceinline__ float __mod(float a, float b) {{
+    return a - b * floorf(a / b);
+}}
+
+extern "C" __global__ void kernel_name(
+	{}
 ) {{
 {kernel_lines}
-}}",
+}}"#,
                     input_string.join("\n\t")
                 )
             }
@@ -937,11 +942,6 @@ fn make_kernel(
                 c_inner_stride,
                 k_outer_loops,
             } => {
-                if cfg!(feature = "cuda") {
-                    // CUDA build: skip / fallback
-                    return None;
-                }
-
                 let mut srcs = kernel_graph
                     .edges_directed(node, Direction::Incoming)
                     .sorted_by_key(|e| e.id())
@@ -954,9 +954,78 @@ fn make_kernel(
                     .unwrap();
                 let (dest, dest_ptr) = node_to_var[&dest];
                 assert!(src_a_ptr && src_b_ptr && dest_ptr);
-                kernel_lines.push(
-                    format!(
-                        "
+
+                match arch {
+                    GPUArch::CUDA => {
+                        // CUDA warp-cooperative 8x8 matrix multiply
+                        // Each warp (32 threads) computes one 8x8 tile
+                        // Thread lane (0-31) maps to 2 output elements each (64 elements / 32 threads)
+                        // lane -> (row0, col0), (row1, col1)
+                        // lane 0-7: row 0, cols 0-7 and row 4, cols 0-7
+                        // lane 8-15: row 1, cols 0-7 and row 5, cols 0-7
+                        // etc.
+                        kernel_lines.push(
+                            format!(
+                                r#"
+// CUDA Warp-Cooperative 8x8 Matrix Multiply
+{{
+    const int lane = threadIdx.x & 31;
+    const int row0 = lane >> 3;         // lane / 8: gives rows 0-3
+    const int col = lane & 7;           // lane % 8: gives cols 0-7
+    const int row1 = row0 + 4;          // second row: 4-7
+
+    float acc0 = 0.0f;
+    float acc1 = 0.0f;
+
+    float* A_ptr = {a};
+    float* B_ptr = {b};
+    const int a_inner = {a_inner};
+    const int b_inner = {b_inner};
+
+    for (int tc_loop = 0; tc_loop < {k_loops}; tc_loop++) {{
+        __syncwarp();
+
+        // Compute A and B offsets for this K iteration
+        float* A_tile = A_ptr + {a_k};
+        float* B_tile = B_ptr + {b_k};
+
+        // Each thread accumulates dot product for its 2 output elements
+        #pragma unroll
+        for (int k = 0; k < 8; k++) {{
+            float a_val0 = A_tile[row0 * a_inner + k];
+            float a_val1 = A_tile[row1 * a_inner + k];
+            float b_val = B_tile[k * b_inner + col];
+            acc0 += a_val0 * b_val;
+            acc1 += a_val1 * b_val;
+        }}
+    }}
+
+    // Store results
+    float* C_ptr = {c};
+    const int c_inner = {c_inner};
+    C_ptr[row0 * c_inner + col] = acc0;
+    C_ptr[row1 * c_inner + col] = acc1;
+}}"#,
+                                a = var_to_char(src_a),
+                                b = var_to_char(src_b),
+                                c = var_to_char(dest),
+                                k_loops = k_outer_loops.to_kernel(),
+                                a_k = a_k_stride.to_kernel().replace("const_z", "tc_loop"),
+                                b_k = b_k_stride.to_kernel().replace("const_z", "tc_loop"),
+                                a_inner = a_inner_stride.substitute('z', 1).to_kernel(),
+                                b_inner = b_inner_stride.substitute('z', 1).to_kernel(),
+                                c_inner = c_inner_stride.substitute('z', 1).to_kernel(),
+                            )
+                            .split('\n')
+                            .map(|s| format!("{spacing}\t{s}"))
+                            .join("\n"),
+                        );
+                    }
+                    GPUArch::Metal(_) => {
+                        // Metal simdgroup 8x8 matrix multiply
+                        kernel_lines.push(
+                            format!(
+                                "
 // TensorCore loop
 {{
 	simdgroup_float8x8 acc = simdgroup_float8x8(0);
@@ -973,20 +1042,22 @@ fn make_kernel(
 	}}
 	simdgroup_store(acc, {}, {});
 }}",
-                        k_outer_loops.to_kernel(),
-                        var_to_char(src_a),
-                        a_k_stride.to_kernel().replace("const_z", "tc_loop"),
-                        a_inner_stride.substitute('z', 1).to_kernel(),
-                        var_to_char(src_b),
-                        b_k_stride.to_kernel().replace("const_z", "tc_loop"),
-                        b_inner_stride.substitute('z', 1).to_kernel(),
-                        var_to_char(dest),
-                        c_inner_stride.substitute('z', 1).to_kernel()
-                    )
-                    .split("\n")
-                    .map(|s| format!("{spacing}\t{s}"))
-                    .join("\n"),
-                );
+                                k_outer_loops.to_kernel(),
+                                var_to_char(src_a),
+                                a_k_stride.to_kernel().replace("const_z", "tc_loop"),
+                                a_inner_stride.substitute('z', 1).to_kernel(),
+                                var_to_char(src_b),
+                                b_k_stride.to_kernel().replace("const_z", "tc_loop"),
+                                b_inner_stride.substitute('z', 1).to_kernel(),
+                                var_to_char(dest),
+                                c_inner_stride.substitute('z', 1).to_kernel()
+                            )
+                            .split('\n')
+                            .map(|s| format!("{spacing}\t{s}"))
+                            .join("\n"),
+                        );
+                    }
+                }
                 node_to_var.insert(node, (dest, true));
             }
         }

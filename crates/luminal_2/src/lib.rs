@@ -9,6 +9,9 @@ pub mod utils;
 #[cfg(all(test, feature = "metal"))]
 mod e2e_tests;
 
+#[cfg(all(test, feature = "cuda"))]
+mod cuda_tests;
+
 #[cfg(feature = "cuda")]
 use itertools::Itertools;
 use luminal::prelude::*;
@@ -131,7 +134,19 @@ impl Operator for CompatKernel {
         let ctx = cudarc::driver::CudaContext::new(0).unwrap();
         let stream = ctx.default_stream();
 
-        let ptx = cudarc::nvrtc::compile_ptx(&self.0.code).unwrap();
+        let ptx = cudarc::nvrtc::compile_ptx_with_opts(
+            &self.0.code,
+            cudarc::nvrtc::CompileOptions {
+                include_paths: vec!["/usr/include".into(), "/usr/local/cuda/include".into()],
+                options: vec![
+                    "--gpu-architecture=sm_75".into(),
+                    "--relocatable-device-code=false".into(),
+                    "--std=c++17".into(),
+                ],
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let module = ctx.load_module(ptx).unwrap();
         let kernel = module.load_function("kernel_name").unwrap();
         let mut builder = stream.launch_builder(&kernel);
