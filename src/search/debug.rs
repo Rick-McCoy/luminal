@@ -2,6 +2,10 @@
 
 use std::f32::consts::{FRAC_PI_2, TAU};
 
+use crate::{
+    prelude::petgraph::{graph::NodeIndex, prelude::StableGraph, Directed, Direction},
+    shape::Expression,
+};
 use eframe::{
     egui,
     egui::{Color32, Pos2, Vec2},
@@ -9,10 +13,6 @@ use eframe::{
 use egglog::Term;
 use egui::ViewportId;
 use itertools::Itertools;
-use crate::{
-    prelude::petgraph::{graph::NodeIndex, prelude::StableGraph, Directed, Direction},
-    shape::Expression,
-};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{GraphTerm, Kernel};
@@ -47,8 +47,8 @@ pub fn display_multiple_graphs<T: TermToString, E: EdgeToString>(
         .map(|g| View::new(to_display_graph(g, &[])))
         .collect();
 
-    let icon = eframe::icon_data::from_png_bytes(include_bytes!("debugger_icon.png"))
-        .expect("valid PNG");
+    let icon =
+        eframe::icon_data::from_png_bytes(include_bytes!("debugger_icon.png")).expect("valid PNG");
     let _ = eframe::run_native(
         "Luminal Debugger",
         eframe::NativeOptions {

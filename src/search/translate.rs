@@ -7,8 +7,8 @@
 
 use super::{
     codegen::{GRID_DIMS, THREADBLOCK_DIMS},
-    utils::{loop_in, loop_out},
     operators::{CompatKernel, Diff},
+    utils::{loop_in, loop_out},
     GraphTerm,
 };
 use crate::prelude::{

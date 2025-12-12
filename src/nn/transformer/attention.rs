@@ -106,11 +106,11 @@ impl Module<(GraphTensor, GraphTensor, GraphTensor)> for MultiHeadSelfAttention 
 
 #[cfg(test)]
 mod tests {
-    use dfdx::prelude::{Module as DfdxModule, *};
     use crate::{
         prelude::{Module, *},
         tests::assert_close,
     };
+    use dfdx::prelude::{Module as DfdxModule, *};
 
     use super::MultiHeadSelfAttention;
     #[test]

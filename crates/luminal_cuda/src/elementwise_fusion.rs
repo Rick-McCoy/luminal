@@ -517,11 +517,11 @@ impl<T: CudaFloat> Operator for FusedElementwiseOp<T> {
 
 #[cfg(test)]
 mod tests {
+    use luminal::nn::*;
     use luminal::{
         prelude::{binary::F32Pow, *},
         tests::{assert_close, assert_close_precision, random_vec, random_vec_rng},
     };
-    use luminal::nn::*;
     use rand::{rngs::StdRng, SeedableRng};
 
     use crate::CudaCompiler;

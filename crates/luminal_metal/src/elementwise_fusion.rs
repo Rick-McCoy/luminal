@@ -651,11 +651,11 @@ impl<T: MetalFloat> Operator for FusedElementwiseOp<T> {
 
 #[cfg(test)]
 mod tests {
+    use luminal::nn::{LayerNorm, Linear};
     use luminal::{
         prelude::{binary::F32Pow, *},
         tests::{assert_close, assert_close_precision, random_vec, random_vec_rng},
     };
-    use luminal::nn::{LayerNorm, Linear};
     use rand::{rngs::StdRng, SeedableRng};
 
     use crate::MetalCompiler;

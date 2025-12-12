@@ -3,8 +3,8 @@
 //! Run with: cargo bench --bench nn_ops
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use luminal::prelude::*;
 use luminal::nn::{Conv2D, Linear, MaxPool2D, RMSNorm};
+use luminal::prelude::*;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 fn random_vec(size: usize) -> Vec<f32> {

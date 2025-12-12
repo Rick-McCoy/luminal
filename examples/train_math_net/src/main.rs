@@ -24,8 +24,8 @@
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use luminal::prelude::*;
 use luminal::nn::{Linear, Swish};
+use luminal::prelude::*;
 use luminal::training::{
     adam_on_graph, mse_loss, AdamConfig, Autograd, CosineAnnealingLR, LRScheduler,
 };
@@ -113,8 +113,11 @@ fn main() {
 
     // Training loop
     println!("\n🚀 Training...");
-    println!("   Max iterations: {}, Target accuracy: {:.1}%",
-             args.max_iters, args.target_acc * 100.0);
+    println!(
+        "   Max iterations: {}, Target accuracy: {:.1}%",
+        args.max_iters,
+        args.target_acc * 100.0
+    );
     println!();
 
     let mut rng = thread_rng();
@@ -158,13 +161,27 @@ fn main() {
         output.drop();
 
         if iter % 100 == 0 {
-            print_progress(iter, &loss_avg, &acc_avg, &scheduler, &iter_times, args.verbose);
+            print_progress(
+                iter,
+                &loss_avg,
+                &acc_avg,
+                &scheduler,
+                &iter_times,
+                args.verbose,
+            );
         }
         iter += 1;
     }
 
     // Print summary
-    print_summary(iter, &loss_avg, &acc_avg, compile_time, start.elapsed(), &iter_times);
+    print_summary(
+        iter,
+        &loss_avg,
+        &acc_avg,
+        compile_time,
+        start.elapsed(),
+        &iter_times,
+    );
 }
 
 fn print_header(args: &Args) {
@@ -174,15 +191,27 @@ fn print_header(args: &Args) {
     println!("╠══════════════════════════════════════════════════════════════╣");
 
     #[cfg(feature = "metal")]
-    let backend = if args.optimal { "Metal (search-optimized)" } else { "Metal (fast)" };
+    let backend = if args.optimal {
+        "Metal (search-optimized)"
+    } else {
+        "Metal (fast)"
+    };
     #[cfg(feature = "cuda")]
-    let backend = if args.optimal { "CUDA (search-optimized)" } else { "CUDA (fast)" };
+    let backend = if args.optimal {
+        "CUDA (search-optimized)"
+    } else {
+        "CUDA (fast)"
+    };
     #[cfg(not(any(feature = "metal", feature = "cuda")))]
     let backend = "CPU";
 
     println!("║ Backend: {:<51} ║", backend);
     println!("║ Max Iterations: {:<44} ║", args.max_iters);
-    println!("║ Target Accuracy: {:>5.1}%{:<38} ║", args.target_acc * 100.0, "");
+    println!(
+        "║ Target Accuracy: {:>5.1}%{:<38} ║",
+        args.target_acc * 100.0,
+        ""
+    );
     println!("║ Learning Rate: {:<45} ║", args.lr);
     println!("╚══════════════════════════════════════════════════════════════╝");
 }
@@ -238,13 +267,31 @@ fn print_summary(
     println!("╔══════════════════════════════════════════════════════════════╗");
     println!("║                    Training Summary                          ║");
     println!("╠══════════════════════════════════════════════════════════════╣");
-    println!("║ Converged in {:>6} iterations                               ║", iters);
-    println!("║ Final Loss:        {:>8.4}                                  ║", loss_avg.value);
-    println!("║ Final Accuracy:    {:>7.2}%                                  ║", acc_avg.value * 100.0);
+    println!(
+        "║ Converged in {:>6} iterations                               ║",
+        iters
+    );
+    println!(
+        "║ Final Loss:        {:>8.4}                                  ║",
+        loss_avg.value
+    );
+    println!(
+        "║ Final Accuracy:    {:>7.2}%                                  ║",
+        acc_avg.value * 100.0
+    );
     println!("╠══════════════════════════════════════════════════════════════╣");
-    println!("║ Compile Time:      {:>8.2}s                                  ║", compile_time.as_secs_f32());
-    println!("║ Training Time:     {:>8.2}s                                  ║", train_time.as_secs_f32());
-    println!("║ Avg Iter Time:     {:>8.0}µs                                 ║", avg_iter);
+    println!(
+        "║ Compile Time:      {:>8.2}s                                  ║",
+        compile_time.as_secs_f32()
+    );
+    println!(
+        "║ Training Time:     {:>8.2}s                                  ║",
+        train_time.as_secs_f32()
+    );
+    println!(
+        "║ Avg Iter Time:     {:>8.0}µs                                 ║",
+        avg_iter
+    );
     println!("╚══════════════════════════════════════════════════════════════╝");
 }
 

@@ -11,7 +11,6 @@
     clippy::len_zero
 )]
 
-use itertools::Itertools;
 use crate::{
     prelude::{
         petgraph::{
@@ -25,6 +24,7 @@ use crate::{
     },
     shape::{Expression, Term},
 };
+use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
@@ -1583,7 +1583,10 @@ pub fn stitch_meta_graph_together(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::search::{codegen::SubGraph, types::{GraphTerm, GPUArch}};
+    use crate::search::{
+        codegen::SubGraph,
+        types::{GPUArch, GraphTerm},
+    };
     use std::collections::HashMap;
 
     #[test]

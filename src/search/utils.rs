@@ -9,9 +9,6 @@
 
 use std::{collections::HashMap, io::Write};
 
-use egglog::{prelude::exprs::var, CommandOutput, EGraph, Error, Term};
-use egui::Color32;
-use itertools::Itertools;
 use crate::{
     prelude::{
         petgraph::{
@@ -25,6 +22,9 @@ use crate::{
     },
     shape::Expression,
 };
+use egglog::{prelude::exprs::var, CommandOutput, EGraph, Error, Term};
+use egui::Color32;
+use itertools::Itertools;
 use regex::Regex;
 use rustc_hash::FxHashSet;
 

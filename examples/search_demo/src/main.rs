@@ -30,7 +30,7 @@ fn main() {
         benchmark::run_benchmarks();
         return;
     }
-    
+
     // Check for search benchmark mode
     if std::env::args().any(|arg| arg == "search") {
         benchmark::run_search_benchmark();
@@ -162,7 +162,11 @@ fn demo_search_compilation() {
             .zip(&expected)
             .map(|(a, b)| (a - b).abs())
             .fold(0.0, f32::max);
-        assert!(max_error < 1e-5, "Output mismatch! Max error: {}", max_error);
+        assert!(
+            max_error < 1e-5,
+            "Output mismatch! Max error: {}",
+            max_error
+        );
         println!("        ✓ Verified correct!\n");
     } else {
         println!("Step 4: Codegen returned None (graph too simple for optimization)");
@@ -276,7 +280,7 @@ fn demo_custom_kernel() {
             }
         "#
         .to_string(),
-        grid: (8.into(), 1.into(), 1.into()),        // 8 threads total
+        grid: (8.into(), 1.into(), 1.into()), // 8 threads total
         threadblock: (1.into(), 1.into(), 1.into()), // 1 thread per block
         smem: 0.into(),
         outputs: vec![8.into()], // Output size: 8 floats
@@ -415,7 +419,10 @@ fn demo_matmul() {
             if max_error < 1e-3 {
                 println!("✓ Matmul verified correct! (max error: {:.6})\n", max_error);
             } else {
-                println!("⚠️  Max error: {:.6} (may be expected for some patterns)\n", max_error);
+                println!(
+                    "⚠️  Max error: {:.6} (may be expected for some patterns)\n",
+                    max_error
+                );
             }
         } else {
             println!(
@@ -503,13 +510,13 @@ fn demo_matmul() {
 /// showing how larger networks would be optimized.
 #[cfg(feature = "cuda")]
 fn demo_mnist_inference() {
+    use luminal::nn::Linear;
     use luminal::search::{
         codegen::{codegen, stitch_meta_graph_together},
         run::compile_kernels,
         translate::translate_graph,
         GPUArch,
     };
-    use luminal::nn::Linear;
 
     println!("═══ Demo 4: MLP Inference with Search Optimization ═══\n");
 

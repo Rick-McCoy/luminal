@@ -25,16 +25,16 @@ use super::GPUArch;
 use super::GraphTerm;
 #[cfg(any(feature = "cuda", feature = "metal"))]
 use super::Kernel;
+use crate::prelude::petgraph::prelude::StableGraph;
+use crate::prelude::petgraph::{Directed, Direction};
+use crate::prelude::NodeIndex;
+use crate::shape::{Expression, Term};
 #[cfg(any(feature = "cuda", feature = "metal"))]
 use colored::Colorize;
 #[cfg(feature = "cuda")]
 use cudarc::driver::CudaContext;
 use egraph_serialize::{ClassId, EGraph, NodeId};
 use itertools::Itertools;
-use crate::prelude::petgraph::prelude::StableGraph;
-use crate::prelude::petgraph::{Directed, Direction};
-use crate::prelude::NodeIndex;
-use crate::shape::{Expression, Term};
 #[cfg(feature = "metal")]
 use objc2_metal::MTLCreateSystemDefaultDevice;
 use rand::{rng, Rng};

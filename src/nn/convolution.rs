@@ -314,11 +314,11 @@ impl Conv3D {
 #[cfg(test)]
 mod tests {
     use super::{Conv1D, Conv2D, Conv3D};
-    use candle_core::{Device, Tensor};
     use crate::{
         prelude::*,
         tests::{assert_close, random_vec_rng},
     };
+    use candle_core::{Device, Tensor};
     use rand::{rngs::StdRng, SeedableRng};
 
     #[test]

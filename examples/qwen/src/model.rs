@@ -1,7 +1,7 @@
 use std::f32;
 
-use luminal::prelude::{binary::F32Pow, *};
 use luminal::nn::{Embedding, LayerNorm, Linear};
+use luminal::prelude::{binary::F32Pow, *};
 
 // Qwen3 4B Config
 pub const VOCAB_SIZE: usize = 151936;

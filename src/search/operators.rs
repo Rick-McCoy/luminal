@@ -227,7 +227,9 @@ impl Operator for CompatKernel {
 #[cfg(not(all(feature = "search", any(feature = "cuda", feature = "metal"))))]
 impl Operator for CompatKernel {
     fn process(&mut self, _inputs: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
-        panic!("CompatKernel requires 'search' feature with 'cuda' or 'metal' feature to be enabled")
+        panic!(
+            "CompatKernel requires 'search' feature with 'cuda' or 'metal' feature to be enabled"
+        )
     }
 }
 
@@ -259,11 +261,7 @@ impl Operator for Diff {
     fn process(&mut self, inp: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
         let ctx = cudarc::driver::CudaContext::new(0).unwrap();
         let stream = ctx.default_stream();
-        let buffer = inp[0]
-            .0
-            .borrowed()
-            .downcast_ref::<CudaData<f32>>()
-            .unwrap();
+        let buffer = inp[0].0.borrowed().downcast_ref::<CudaData<f32>>().unwrap();
         let data: Vec<f32> = stream.clone_dtoh(&buffer.0).unwrap();
         let mut file = File::create(format!("{}.bin", self.name)).unwrap();
         let bytes: &[u8] = unsafe {

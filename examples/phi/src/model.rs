@@ -1,5 +1,5 @@
-use luminal::prelude::{binary::F32Pow, *};
 use luminal::nn::{Embedding, LayerNorm, Linear};
+use luminal::prelude::{binary::F32Pow, *};
 
 // Phi3 mini Config
 pub const VOCAB_SIZE: usize = 32064;

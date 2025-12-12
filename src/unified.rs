@@ -63,7 +63,6 @@ pub enum CompilationMode {
     },
 }
 
-
 impl CompilationMode {
     /// Create a new Fast compilation mode.
     pub fn fast() -> Self {

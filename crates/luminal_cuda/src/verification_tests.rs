@@ -5,11 +5,11 @@
 
 #[cfg(test)]
 mod tests {
-    use luminal::prelude::*;
     use luminal::nn::{
         AvgPool2D, BatchNorm1d, BatchNorm2d, Conv2D, Dropout, GlobalAvgPool2D, GlobalMaxPool2D,
         Linear, MaxPool1D, MaxPool2D, RMSNorm, GRU, LSTM,
     };
+    use luminal::prelude::*;
     use rand::{rngs::StdRng, Rng, SeedableRng};
 
     use crate::CudaCompiler;

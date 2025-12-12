@@ -83,9 +83,15 @@ pub enum GraphTerm {
     /// Global memory reference.
     GMEM { label: String },
     /// Loop entry (outer loop).
-    LoopIn { range: Expression, stride: Expression },
+    LoopIn {
+        range: Expression,
+        stride: Expression,
+    },
     /// Loop exit (inner loop).
-    LoopOut { range: Expression, stride: Expression },
+    LoopOut {
+        range: Expression,
+        stride: Expression,
+    },
     /// Element-wise addition.
     Add,
     /// Element-wise multiplication.

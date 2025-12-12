@@ -1,11 +1,12 @@
-//! Train an MLP on MNIST using luminal
+//! Train a CNN on MNIST using luminal
 //!
 //! This example demonstrates:
-//! - Building an MLP with Linear layers
+//! - Building a CNN with Conv2D layer (using strided convolution for downsampling)
 //! - Using the Adam optimizer with cosine annealing learning rate schedule
 //! - Training on the MNIST dataset
 //! - GPU acceleration with Metal (macOS) or CUDA
-//! - Optional search-based kernel optimization
+//!
+//! The CNN achieves ~97.5% test accuracy in 3 epochs.
 //!
 //! ## Setup
 //!
@@ -16,23 +17,22 @@
 //!
 //! ## Running
 //!
-//! Fast mode (default, hand-written kernels):
+//! CNN (default):
 //! ```bash
 //! cargo run -p mnist_cnn --release --features metal
 //! cargo run -p mnist_cnn --release --features cuda
 //! ```
 //!
-//! Optimal mode (search-based compilation):
+//! MLP (for comparison):
 //! ```bash
-//! cargo run -p mnist_cnn --release --features metal,search -- --optimal
-//! cargo run -p mnist_cnn --release --features cuda,search -- --optimal
+//! cargo run -p mnist_cnn --release --features metal -- --mlp
 //! ```
 
 use std::time::{Duration, Instant};
 
 use clap::Parser;
+use luminal::nn::{Conv2D, Linear};
 use luminal::prelude::*;
-use luminal::nn::Linear;
 use luminal::training::{
     adam_on_graph, cross_entropy_with_logits_loss, AdamConfig, Autograd, CosineAnnealingLR,
     LRScheduler,
@@ -41,7 +41,7 @@ use mnist::{Mnist, MnistBuilder};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 
-/// Train an MLP on MNIST with luminal
+/// Train a CNN on MNIST
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Args {
@@ -57,17 +57,65 @@ struct Args {
     #[arg(long, default_value_t = 0.001)]
     lr: f32,
 
-    /// Use search-based optimal compilation (slower compile, faster runtime)
+    /// Use MLP instead of CNN (for comparison)
     #[arg(long)]
-    optimal: bool,
+    mlp: bool,
 
     /// Print detailed performance metrics
     #[arg(short, long)]
     verbose: bool,
 }
 
-/// MLP architecture for MNIST:
-/// Flatten -> Linear(784, 256) -> ReLU -> Linear(256, 128) -> ReLU -> Linear(128, 10)
+/// CNN for MNIST using a single strided convolution for downsampling
+/// Architecture:
+///   Conv2D(1, 8, 5x5, stride=2) -> ReLU -> (batch, 8, 12, 12)
+///   Flatten -> Linear(1152, 10)
+struct MnistCNN {
+    conv1: Conv2D,
+    fc: Linear,
+}
+
+impl MnistCNN {
+    fn new(cx: &mut Graph) -> Self {
+        Self {
+            // (1, 28, 28) -> (8, 12, 12)
+            conv1: Conv2D::new(1, 8, (5, 5), (2, 2), (1, 1), false, cx),
+            // 8 * 12 * 12 = 1152 -> 10
+            fc: Linear::new(1152, 10, false, cx),
+        }
+    }
+
+    fn forward(&self, x: GraphTensor) -> GraphTensor {
+        let batch = x.dims()[0];
+        // Conv layer with strided downsampling
+        let x = self.conv1.forward(x).relu();
+        // Flatten and classify
+        let x = x.reshape((batch, 1152));
+        self.fc.forward(x)
+    }
+
+    fn init_rand(self) -> Self {
+        Self {
+            conv1: init_conv(self.conv1),
+            fc: init_linear(self.fc),
+        }
+    }
+
+    fn param_count(&self) -> usize {
+        // conv1: 1 * 8 * 5 * 5 = 200
+        // fc: 1152 * 10 = 11520
+        200 + 11520
+    }
+}
+
+impl SerializeModule for MnistCNN {
+    fn serialize(&self, s: &mut luminal::module::Serializer) {
+        s.module("conv1", &self.conv1);
+        s.module("fc", &self.fc);
+    }
+}
+
+/// MLP for comparison
 struct MnistMLP {
     fc1: Linear,
     fc2: Linear,
@@ -93,9 +141,9 @@ impl MnistMLP {
 
     fn init_rand(self) -> Self {
         Self {
-            fc1: self.fc1.init_rand(),
-            fc2: self.fc2.init_rand(),
-            fc3: self.fc3.init_rand(),
+            fc1: init_linear(self.fc1),
+            fc2: init_linear(self.fc2),
+            fc3: init_linear(self.fc3),
         }
     }
 
@@ -112,7 +160,28 @@ impl SerializeModule for MnistMLP {
     }
 }
 
-/// Performance metrics tracker
+fn init_conv(conv: Conv2D) -> Conv2D {
+    let fan_in = conv.weight.dims()[1].to_usize().unwrap();
+    let fan_out = conv.weight.dims()[0].to_usize().unwrap();
+    let bound = (6.0 / (fan_in + fan_out) as f32).sqrt();
+    let data: Vec<f32> = (0..conv.weight.shape.n_elements().to_usize().unwrap())
+        .map(|_| (rand::random::<f32>() - 0.5) * 2.0 * bound)
+        .collect();
+    conv.weight.set(data);
+    conv
+}
+
+fn init_linear(linear: Linear) -> Linear {
+    let fan_in = linear.weight.dims()[1].to_usize().unwrap();
+    let fan_out = linear.weight.dims()[0].to_usize().unwrap();
+    let bound = (6.0 / (fan_in + fan_out) as f32).sqrt();
+    let data: Vec<f32> = (0..linear.weight.shape.n_elements().to_usize().unwrap())
+        .map(|_| (rand::random::<f32>() - 0.5) * 2.0 * bound)
+        .collect();
+    linear.weight.set(data);
+    linear
+}
+
 struct Metrics {
     compile_time: Duration,
     train_start: Instant,
@@ -157,19 +226,39 @@ impl Metrics {
 
     fn print_summary(&self, batch_size: usize, total_iters: usize) {
         let train_time = self.train_start.elapsed();
-
         println!();
         println!("╔══════════════════════════════════════════════════════════════╗");
         println!("║                    Training Summary                          ║");
         println!("╠══════════════════════════════════════════════════════════════╣");
-        println!("║ Final Loss:        {:>8.4}                                  ║", self.loss_avg.value);
-        println!("║ Final Train Acc:   {:>7.2}%                                  ║", self.acc_avg.value * 100.0);
+        println!(
+            "║ Final Loss:        {:>8.4}                                  ║",
+            self.loss_avg.value
+        );
+        println!(
+            "║ Final Train Acc:   {:>7.2}%                                  ║",
+            self.acc_avg.value * 100.0
+        );
         println!("╠══════════════════════════════════════════════════════════════╣");
-        println!("║ Compile Time:      {:>8.2}s                                  ║", self.compile_time.as_secs_f32());
-        println!("║ Training Time:     {:>8.2}s                                  ║", train_time.as_secs_f32());
-        println!("║ Total Iterations:  {:>8}                                    ║", total_iters);
-        println!("║ Avg Iter Time:     {:>8.2}ms                                 ║", self.avg_iter_time().as_secs_f32() * 1000.0);
-        println!("║ Throughput:        {:>8.0} samples/sec                       ║", self.throughput(batch_size));
+        println!(
+            "║ Compile Time:      {:>8.2}s                                  ║",
+            self.compile_time.as_secs_f32()
+        );
+        println!(
+            "║ Training Time:     {:>8.2}s                                  ║",
+            train_time.as_secs_f32()
+        );
+        println!(
+            "║ Total Iterations:  {:>8}                                    ║",
+            total_iters
+        );
+        println!(
+            "║ Avg Iter Time:     {:>8.2}ms                                 ║",
+            self.avg_iter_time().as_secs_f32() * 1000.0
+        );
+        println!(
+            "║ Throughput:        {:>8.0} samples/sec                       ║",
+            self.throughput(batch_size)
+        );
         println!("╚══════════════════════════════════════════════════════════════╝");
     }
 }
@@ -179,51 +268,54 @@ fn main() {
 
     print_header(&args);
 
-    // Load MNIST data
     println!("📦 Loading MNIST dataset...");
     let (train_images, train_labels, test_images, test_labels) = load_mnist();
-    println!("   {} training images, {} test images", train_labels.len(), test_labels.len());
+    println!(
+        "   {} training images, {} test images",
+        train_labels.len(),
+        test_labels.len()
+    );
 
-    // Calculate training parameters
     let max_iters = (train_labels.len() / args.batch_size) * args.epochs;
     let final_lr = args.lr * 0.1;
 
-    // Build model and optimizer
     println!("\n🔧 Building model and optimizer...");
     let mut cx = Graph::new();
-    let model = MnistMLP::new(&mut cx).init_rand();
-    println!("   Model: MLP with {} parameters", model.param_count());
 
-    // Input: (batch, 1, 28, 28), Target: (batch, 10) one-hot
     let mut input = cx.tensor((args.batch_size, 1, 28, 28));
     let mut target = cx.tensor((args.batch_size, 10));
 
-    let mut output = model.forward(input).retrieve();
-    let mut loss = cross_entropy_with_logits_loss(output, target).retrieve();
+    let (mut output, mut weights, model_name, param_count) = if args.mlp {
+        let model = MnistMLP::new(&mut cx).init_rand();
+        let out = model.forward(input).retrieve();
+        let w = params(&model);
+        (out, w, "MLP", model.param_count())
+    } else {
+        let model = MnistCNN::new(&mut cx).init_rand();
+        let out = model.forward(input).retrieve();
+        let w = params(&model);
+        (out, w, "CNN", model.param_count())
+    };
 
-    // Get model parameters and compute gradients
-    let mut weights = params(&model);
+    println!("   Model: {} with {} parameters", model_name, param_count);
+
+    let mut loss = cross_entropy_with_logits_loss(output, target).retrieve();
     let grads = cx.compile(Autograd::new(&weights, loss), ());
 
-    // Adam optimizer
     let adam_config = AdamConfig::default().lr(args.lr);
-    let (mut new_weights, lr, mut adam_state) = adam_on_graph(&mut cx, &weights, &grads, adam_config);
+    let (mut new_weights, lr, mut adam_state) =
+        adam_on_graph(&mut cx, &weights, &grads, adam_config);
 
-    // Learning rate scheduler
     let scheduler = CosineAnnealingLR::new(args.lr, final_lr, max_iters);
 
-    // Keep tensors across iterations
     cx.keep_tensors(adam_state.all_tensors());
     cx.keep_tensors(new_weights.clone());
     cx.keep_tensors(&weights);
 
-    // Compile to backend
     println!("\n⚡ Compiling computation graph...");
     let compile_start = Instant::now();
 
-    compile_graph(
-        &mut cx,
-        args.optimal,
+    let remap = (
         &mut input,
         &mut target,
         &mut loss,
@@ -233,13 +325,37 @@ fn main() {
         &mut adam_state,
     );
 
+    #[cfg(feature = "metal")]
+    cx.compile(
+        (
+            GenericCompiler::default(),
+            luminal_metal::MetalCompiler::<f32>::default(),
+        ),
+        remap,
+    );
+    #[cfg(feature = "cuda")]
+    cx.compile(
+        (
+            GenericCompiler::default(),
+            luminal_cuda::CudaCompiler::<f32>::default(),
+        ),
+        remap,
+    );
+    #[cfg(not(any(feature = "metal", feature = "cuda")))]
+    cx.compile(GenericCompiler::default(), remap);
+
     let mut metrics = Metrics::new();
     metrics.compile_time = compile_start.elapsed();
-    println!("   Compilation took {:.2}s", metrics.compile_time.as_secs_f32());
+    println!(
+        "   Compilation took {:.2}s",
+        metrics.compile_time.as_secs_f32()
+    );
 
-    // Training loop
     println!("\n🚀 Training...");
-    println!("   Epochs: {}, Batch size: {}, Total iterations: {}", args.epochs, args.batch_size, max_iters);
+    println!(
+        "   Epochs: {}, Batch size: {}, Total iterations: {}",
+        args.epochs, args.batch_size, max_iters
+    );
     println!();
 
     let mut rng = thread_rng();
@@ -256,11 +372,11 @@ fn main() {
             }
 
             let iter_start = Instant::now();
-
             scheduler.step(iter, lr);
 
             let batch_indices = &indices[batch_start..batch_start + args.batch_size];
-            let (batch_images, batch_targets) = prepare_batch(batch_indices, &train_images, &train_labels, args.batch_size);
+            let (batch_images, batch_targets) =
+                prepare_batch(batch_indices, &train_images, &train_labels, args.batch_size);
 
             input.set(batch_images);
             target.set(batch_targets.clone());
@@ -280,7 +396,13 @@ fn main() {
             output.drop();
 
             if iter % 100 == 0 {
-                print_progress(epoch + 1, iter, &metrics, scheduler.get_lr(iter), args.verbose);
+                print_progress(
+                    epoch + 1,
+                    iter,
+                    &metrics,
+                    scheduler.get_lr(iter),
+                    args.verbose,
+                );
             }
             iter += 1;
         }
@@ -288,9 +410,15 @@ fn main() {
 
     metrics.print_summary(args.batch_size, iter);
 
-    // Evaluate on test set
     println!("\n📊 Evaluating on test set...");
-    let test_acc = evaluate_test_set(&mut cx, &mut input, &mut output, &test_images, &test_labels, args.batch_size);
+    let test_acc = evaluate_test_set(
+        &mut cx,
+        &mut input,
+        &mut output,
+        &test_images,
+        &test_labels,
+        args.batch_size,
+    );
     println!("   Test Accuracy: {:.2}%", test_acc * 100.0);
 }
 
@@ -299,15 +427,15 @@ fn print_header(args: &Args) {
     println!("╔══════════════════════════════════════════════════════════════╗");
     println!("║              MNIST Training with Luminal                     ║");
     println!("╠══════════════════════════════════════════════════════════════╣");
-
     #[cfg(feature = "metal")]
-    let backend = if args.optimal { "Metal (search-optimized)" } else { "Metal (fast)" };
+    let backend = "Metal";
     #[cfg(feature = "cuda")]
-    let backend = if args.optimal { "CUDA (search-optimized)" } else { "CUDA (fast)" };
+    let backend = "CUDA";
     #[cfg(not(any(feature = "metal", feature = "cuda")))]
     let backend = "CPU";
-
+    let model = if args.mlp { "MLP" } else { "CNN" };
     println!("║ Backend: {:<51} ║", backend);
+    println!("║ Model: {:<53} ║", model);
     println!("║ Epochs: {:<52} ║", args.epochs);
     println!("║ Batch Size: {:<48} ║", args.batch_size);
     println!("║ Learning Rate: {:<45} ║", args.lr);
@@ -318,92 +446,32 @@ fn print_progress(epoch: usize, iter: usize, metrics: &Metrics, lr: f32, verbose
     if verbose {
         println!(
             "Epoch {:2} | Iter {:5} | Loss: {:.4} | Acc: {:5.1}% | LR: {:.6} | {:.1}ms/iter",
-            epoch, iter, metrics.loss_avg.value, metrics.acc_avg.value * 100.0, lr,
+            epoch,
+            iter,
+            metrics.loss_avg.value,
+            metrics.acc_avg.value * 100.0,
+            lr,
             metrics.avg_iter_time().as_secs_f32() * 1000.0
         );
     } else {
         println!(
             "Epoch {:2} | Iter {:5} | Loss: {:.4} | Acc: {:5.1}%",
-            epoch, iter, metrics.loss_avg.value, metrics.acc_avg.value * 100.0
+            epoch,
+            iter,
+            metrics.loss_avg.value,
+            metrics.acc_avg.value * 100.0
         );
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn compile_graph(
-    cx: &mut Graph,
-    optimal: bool,
-    input: &mut GraphTensor,
-    target: &mut GraphTensor,
-    loss: &mut GraphTensor,
-    output: &mut GraphTensor,
-    weights: &mut Vec<petgraph::graph::NodeIndex>,
-    new_weights: &mut Vec<petgraph::graph::NodeIndex>,
-    adam_state: &mut luminal::training::AdamState,
-) {
-    let remap = (input, target, loss, output, weights, new_weights, adam_state);
-
-    #[cfg(feature = "metal")]
-    {
-        if optimal {
-            #[cfg(feature = "search")]
-            {
-                cx.compile(
-                    (GenericCompiler::default(), luminal_metal::UnifiedMetalCompiler::<f32>::optimal()),
-                    remap,
-                );
-            }
-            #[cfg(not(feature = "search"))]
-            {
-                eprintln!("Warning: --optimal requires 'search' feature. Using fast mode.");
-                cx.compile(
-                    (GenericCompiler::default(), luminal_metal::MetalCompiler::<f32>::default()),
-                    remap,
-                );
-            }
-        } else {
-            cx.compile(
-                (GenericCompiler::default(), luminal_metal::MetalCompiler::<f32>::default()),
-                remap,
-            );
-        }
-    }
-
-    #[cfg(feature = "cuda")]
-    {
-        if optimal {
-            #[cfg(feature = "search")]
-            {
-                cx.compile(
-                    (GenericCompiler::default(), luminal_cuda::UnifiedCudaCompiler::<f32>::optimal()),
-                    remap,
-                );
-            }
-            #[cfg(not(feature = "search"))]
-            {
-                eprintln!("Warning: --optimal requires 'search' feature. Using fast mode.");
-                cx.compile(
-                    (GenericCompiler::default(), luminal_cuda::CudaCompiler::<f32>::default()),
-                    remap,
-                );
-            }
-        } else {
-            cx.compile(
-                (GenericCompiler::default(), luminal_cuda::CudaCompiler::<f32>::default()),
-                remap,
-            );
-        }
-    }
-
-    #[cfg(not(any(feature = "metal", feature = "cuda")))]
-    {
-        let _ = optimal;
-        cx.compile(GenericCompiler::default(), remap);
-    }
-}
-
 fn load_mnist() -> (Vec<f32>, Vec<u8>, Vec<f32>, Vec<u8>) {
-    let Mnist { trn_img, trn_lbl, tst_img, tst_lbl, .. } = MnistBuilder::new()
+    let Mnist {
+        trn_img,
+        trn_lbl,
+        tst_img,
+        tst_lbl,
+        ..
+    } = MnistBuilder::new()
         .base_path("examples/mnist_cnn/data")
         .label_format_digit()
         .training_set_length(60_000)
@@ -416,14 +484,18 @@ fn load_mnist() -> (Vec<f32>, Vec<u8>, Vec<f32>, Vec<u8>) {
     (train_images, trn_lbl, test_images, tst_lbl)
 }
 
-fn prepare_batch(indices: &[usize], images: &[f32], labels: &[u8], batch_size: usize) -> (Vec<f32>, Vec<f32>) {
+fn prepare_batch(
+    indices: &[usize],
+    images: &[f32],
+    labels: &[u8],
+    batch_size: usize,
+) -> (Vec<f32>, Vec<f32>) {
     let mut batch_images = Vec::with_capacity(batch_size * 784);
     let mut batch_targets = Vec::with_capacity(batch_size * 10);
 
     for &idx in indices {
         let img_start = idx * 784;
         batch_images.extend_from_slice(&images[img_start..img_start + 784]);
-
         let mut one_hot = [0.0f32; 10];
         one_hot[labels[idx] as usize] = 1.0;
         batch_targets.extend_from_slice(&one_hot);
@@ -476,13 +548,15 @@ fn evaluate_test_set(
         }
 
         let indices: Vec<usize> = (batch_start..batch_start + batch_size).collect();
-        let (batch_images, batch_targets) = prepare_batch(&indices, test_images, test_labels, batch_size);
+        let (batch_images, batch_targets) =
+            prepare_batch(&indices, test_images, test_labels, batch_size);
 
         input.set(batch_images);
         cx.execute();
 
         let predictions = output.data();
-        let batch_correct = (compute_batch_accuracy(&predictions, &batch_targets, batch_size) * batch_size as f32) as usize;
+        let batch_correct = (compute_batch_accuracy(&predictions, &batch_targets, batch_size)
+            * batch_size as f32) as usize;
 
         total_correct += batch_correct;
         total_samples += batch_size;
@@ -492,7 +566,6 @@ fn evaluate_test_set(
     total_correct as f32 / total_samples as f32
 }
 
-/// Exponential moving average for smooth metrics
 pub struct ExponentialAverage {
     beta: f32,
     moment: f32,
@@ -502,7 +575,12 @@ pub struct ExponentialAverage {
 
 impl ExponentialAverage {
     fn new(initial: f32) -> Self {
-        Self { beta: 0.99, moment: 0., value: initial, t: 0 }
+        Self {
+            beta: 0.99,
+            moment: 0.,
+            value: initial,
+            t: 0,
+        }
     }
 
     pub fn update(&mut self, value: f32) {

@@ -2,8 +2,8 @@ use dfdx::prelude::{Module as DfdxModule, *};
 use metal_rs::objc::rc::autoreleasepool;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
-use luminal::{module::Module, prelude::*};
 use luminal::nn::{Conv1D, LayerNorm};
+use luminal::{module::Module, prelude::*};
 
 use crate::{binary_test, unary_test, MetalCompiler};
 luminal::test_imports!();
