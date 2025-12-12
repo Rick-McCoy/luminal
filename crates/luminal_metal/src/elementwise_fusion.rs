@@ -655,7 +655,7 @@ mod tests {
         prelude::{binary::F32Pow, *},
         tests::{assert_close, assert_close_precision, random_vec, random_vec_rng},
     };
-    use luminal_nn::{LayerNorm, Linear};
+    use luminal::nn::{LayerNorm, Linear};
     use rand::{rngs::StdRng, SeedableRng};
 
     use crate::MetalCompiler;

@@ -1,9 +1,0 @@
-[package]
-name = "luminal_training"
-version = "0.3.0"
-edition = "2021"
-description = "DEPRECATED: Use luminal::training directly. This crate re-exports luminal::training for backwards compatibility."
-license = "MIT OR Apache-2.0"
-
-[dependencies]
-luminal = { path = "../.." }

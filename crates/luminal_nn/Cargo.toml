@@ -1,9 +1,0 @@
-[package]
-name = "luminal_nn"
-version = "0.3.0"
-edition = "2021"
-description = "DEPRECATED: Use luminal::nn directly. This crate re-exports luminal::nn for backwards compatibility."
-license = "MIT OR Apache-2.0"
-
-[dependencies]
-luminal = { path = "../.." }

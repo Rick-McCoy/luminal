@@ -11,7 +11,6 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed contribution guidelines.
   - `src/search/` - Search-based optimization (egglog, behind `search` feature)
 - GPU backends: `crates/luminal_metal/` and `crates/luminal_cuda/`
   - Each exports `UnifiedCompiler` for fast/optimal mode switching
-- Legacy shims (deprecated): `crates/luminal_nn/`, `crates/luminal_training/`
 
 ### Testing Commands
 

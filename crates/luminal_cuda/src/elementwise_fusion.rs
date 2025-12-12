@@ -521,7 +521,7 @@ mod tests {
         prelude::{binary::F32Pow, *},
         tests::{assert_close, assert_close_precision, random_vec, random_vec_rng},
     };
-    use luminal_nn::*;
+    use luminal::nn::*;
     use rand::{rngs::StdRng, SeedableRng};
 
     use crate::CudaCompiler;

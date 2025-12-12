@@ -1,5 +1,5 @@
 use luminal::prelude::{binary::F32Pow, *};
-use luminal_nn::{Embedding, LayerNorm, Linear};
+use luminal::nn::{Embedding, LayerNorm, Linear};
 
 // Llama3 8B Config
 pub const VOCAB_SIZE: usize = 128256;

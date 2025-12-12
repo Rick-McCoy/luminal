@@ -12,12 +12,12 @@
 //!
 //! Run with CUDA backend:
 //! ```
-//! cargo run -p luminal_2_demo --release --features cuda
+//! cargo run -p search_demo --release --features cuda
 //! ```
 //!
 //! Run benchmarks:
 //! ```
-//! cargo run -p luminal_2_demo --release --features cuda -- benchmark
+//! cargo run -p search_demo --release --features cuda -- benchmark
 //! ```
 
 mod benchmark;
@@ -509,7 +509,7 @@ fn demo_mnist_inference() {
         translate::translate_graph,
         GPUArch,
     };
-    use luminal_nn::Linear;
+    use luminal::nn::Linear;
 
     println!("═══ Demo 4: MLP Inference with Search Optimization ═══\n");
 

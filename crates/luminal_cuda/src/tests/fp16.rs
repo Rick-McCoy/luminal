@@ -2,7 +2,7 @@ use dfdx::prelude::{Module as DfdxModule, *};
 use rand::{rngs::StdRng, SeedableRng};
 
 use luminal::{module::Module, prelude::*};
-use luminal_nn::{Conv1D, LayerNorm, Linear, ReLU};
+use luminal::nn::{Conv1D, LayerNorm, Linear, ReLU};
 
 use crate::{binary_test, unary_test, CudaCompiler};
 luminal::test_imports!();
@@ -550,7 +550,7 @@ fn test_layer_norm() {
 #[test]
 fn test_transformer_encoder_block() {
     let mut cx = Graph::new();
-    let model = luminal_nn::TransformerEncoderBlock::new(3, 4, 1, &mut cx);
+    let model = luminal::nn::TransformerEncoderBlock::new(3, 4, 1, &mut cx);
     model
         .attention
         .w_k
@@ -672,7 +672,7 @@ fn test_embedding() {
         .keep();
     let a = cx.named_tensor("Single", 3).set(vec![1.0, 0.0, 1.0]).keep();
 
-    let model = luminal_nn::Embedding::new(3, 4, &mut cx);
+    let model = luminal::nn::Embedding::new(3, 4, &mut cx);
     model
         .weight
         .set(vec![1.1, 2., 3., 1., 2., 3., 14., 2., 33., 1., 2., 3.]);
@@ -842,7 +842,7 @@ fn test_conv2d() {
         1., 2., 1., 1., 4., 7., 2.,
     ]);
 
-    let model = luminal_nn::Conv2D::new(
+    let model = luminal::nn::Conv2D::new(
         CH_IN,
         CH_OUT,
         (KERNELX, KERNELY),

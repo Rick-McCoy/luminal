@@ -4,7 +4,7 @@ use luminal::prelude::*;
 // codegen::codegen, extract::search, run::run_graph, translate::translate_graph,
 // utils::build_search_space, GPUArch,
 //};
-use luminal_nn::Linear;
+use luminal::nn::Linear;
 use rand::{rng, Rng};
 
 fn main() {

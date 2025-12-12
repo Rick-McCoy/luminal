@@ -6,7 +6,7 @@
 #[cfg(test)]
 mod tests {
     use luminal::prelude::*;
-    use luminal_nn::{
+    use luminal::nn::{
         AvgPool2D, BatchNorm1d, BatchNorm2d, Conv2D, Dropout, GlobalAvgPool2D, GlobalMaxPool2D,
         Linear, MaxPool1D, MaxPool2D, RMSNorm, GRU, LSTM,
     };
@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn test_mlp_metal() {
         use luminal::module::Module;
-        use luminal_nn::{ReLU, Swish};
+        use luminal::nn::{ReLU, Swish};
 
         let mut rng = StdRng::seed_from_u64(42);
         let input_data: Vec<f32> = (0..32).map(|_| rng.random()).collect();

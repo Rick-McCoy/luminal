@@ -18,9 +18,7 @@ luminal/
 ├── crates/
 │   ├── luminal_cpu/       # CPU compiler & ops
 │   ├── luminal_metal/     # Metal (macOS) compiler + UnifiedMetalCompiler
-│   ├── luminal_cuda/      # CUDA (NVIDIA) compiler + UnifiedCudaCompiler
-│   ├── luminal_nn/        # [Deprecated] Re-exports luminal::nn
-│   └── luminal_training/  # [Deprecated] Re-exports luminal::training
+│   └── luminal_cuda/      # CUDA (NVIDIA) compiler + UnifiedCudaCompiler
 ├── examples/              # Full model implementations
 │   ├── llama/             # LLaMA 3 inference
 │   ├── phi/               # Phi-3 inference

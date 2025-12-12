@@ -35,10 +35,10 @@ Demonstrates a simple MLP forward pass and shows how the search optimizer genera
 
 ```bash
 # Run with CUDA backend
-cargo run -p luminal_2_demo --release --features cuda
+cargo run -p search_demo --release --features cuda
 
 # Run with Metal backend (macOS only)
-cargo run -p luminal_2_demo --release --features metal
+cargo run -p search_demo --release --features metal
 ```
 
 ## Example Output

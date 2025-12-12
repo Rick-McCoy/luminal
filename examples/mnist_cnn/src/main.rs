@@ -27,8 +27,8 @@
 //! ```
 
 use luminal::prelude::*;
-use luminal_nn::Linear;
-use luminal_training::{
+use luminal::nn::Linear;
+use luminal::training::{
     adam_on_graph, cross_entropy_with_logits_loss, AdamConfig, Autograd, CosineAnnealingLR,
     LRScheduler,
 };

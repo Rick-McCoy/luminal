@@ -2,7 +2,7 @@ use dfdx::prelude::{Module as DfdxModule, *};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 use luminal::{module::Module, prelude::*};
-use luminal_nn::{Conv1D, Linear, ReLU};
+use luminal::nn::{Conv1D, Linear, ReLU};
 
 use crate::{binary_test, unary_test, MetalCompiler};
 luminal::test_imports!();
@@ -290,7 +290,7 @@ fn test_relu_and_linear() {
 #[test]
 fn test_transformer_encoder_block() {
     let mut cx = Graph::new();
-    let model = luminal_nn::TransformerEncoderBlock::new(3, 4, 1, &mut cx);
+    let model = luminal::nn::TransformerEncoderBlock::new(3, 4, 1, &mut cx);
     model
         .attention
         .w_k
@@ -486,7 +486,7 @@ fn test_conv2d() {
         .tensor((CH_IN, DIMX_IN, DIMY_IN))
         .set(input_data.clone());
     let model_cpu =
-        luminal_nn::Conv2D::new(CH_IN, CH_OUT, KERNEL, STRIDE, DILATION, false, &mut cx_cpu);
+        luminal::nn::Conv2D::new(CH_IN, CH_OUT, KERNEL, STRIDE, DILATION, false, &mut cx_cpu);
     model_cpu.weight.set(weight_data.clone());
     let out_cpu = model_cpu.forward(inp_cpu).retrieve();
     cx_cpu.execute();
@@ -497,7 +497,7 @@ fn test_conv2d() {
     let inp_metal = cx_metal
         .tensor((CH_IN, DIMX_IN, DIMY_IN))
         .set(input_data.clone());
-    let model_metal = luminal_nn::Conv2D::new(
+    let model_metal = luminal::nn::Conv2D::new(
         CH_IN,
         CH_OUT,
         KERNEL,

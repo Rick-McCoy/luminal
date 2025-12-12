@@ -1,5 +1,5 @@
 [package]
-name = "luminal_2_demo"
+name = "search_demo"
 version = "0.1.0"
 edition = "2021"
 description = "Demo of search-based compiler"
@@ -7,8 +7,6 @@ description = "Demo of search-based compiler"
 
 [dependencies]
 luminal = { path = "../.." }
-luminal_nn = { path = "../../crates/luminal_nn" }
-luminal_training = { path = "../../crates/luminal_training" }
 luminal_cuda = { path = "../../crates/luminal_cuda", optional = true }
 luminal_metal = { path = "../../crates/luminal_metal", optional = true }
 

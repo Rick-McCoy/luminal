@@ -1,5 +1,5 @@
 use luminal::prelude::{binary::F32Pow, *};
-use luminal_nn::{Conv1D, Embedding, GeLU, LayerNorm, Linear};
+use luminal::nn::{Conv1D, Embedding, GeLU, LayerNorm, Linear};
 use std::marker::PhantomData;
 use std::ops::{Add, Mul};
 

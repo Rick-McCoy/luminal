@@ -2,7 +2,7 @@
 
 This document provides a step-by-step implementation guide to complete the search-based compilation system and realize Luminal's full potential.
 
-**Last Updated:** 2025-12-12 — Phases 0-5 complete.
+**Last Updated:** 2025-12-12 — Phases 0-5 complete. Version 0.3.0 released.
 
 ### Quick Status
 
@@ -53,10 +53,12 @@ This document provides a step-by-step implementation guide to complete the searc
 | `luminal_metal` | 205 | ✅ All pass |
 | `luminal_cuda` | 168/199 | ⚠️ 31 pre-existing failures (fp16, norm, conv2d) |
 
-**Note:** The architecture has been unified into a PyTorch-like structure:
-- `luminal_nn` and `luminal_training` merged into `luminal::nn` and `luminal::training`
-- Search-based compilation (`luminal_2`) merged into `luminal::search` (behind `search` feature)
-- Old crates are deprecated shims that re-export from core `luminal`
+**Note (v0.3.0):** The architecture has been unified into a PyTorch-like structure:
+- `luminal::nn` - Neural network modules (Linear, ReLU, LayerNorm, Transformer, etc.)
+- `luminal::training` - Autograd, optimizers (SGD, Adam), loss functions, LR schedulers
+- `luminal::search` - Search-based optimization (behind `search` feature)
+
+The deprecated `luminal_nn` and `luminal_training` crates were removed in v0.3.0.
 
 ### What Actually Works
 
@@ -633,8 +635,8 @@ The original `(let-scheduler bo (back-off))` syntax was incompatible with the eg
 |------|---------|
 | `crates/luminal_2/src/code.lisp` | Added tile sizes 4, 16, 32; updated TileLoop to 3 args; final expr saturation; fixed scheduler syntax |
 | `crates/luminal_2/src/extract.rs` | MAX_SEARCHED_GRAPHS=10000; early termination; cleaned INVALID_IR |
-| `examples/luminal_2_demo/src/benchmark.rs` | Added search benchmark to verify Phase 4 improvements |
-| `examples/luminal_2_demo/src/main.rs` | Added `benchmark` and `search` CLI commands |
+| `examples/search_demo/src/benchmark.rs` | Added search benchmark to verify Phase 4 improvements |
+| `examples/search_demo/src/main.rs` | Added `benchmark` and `search` CLI commands |
 
 ### 4.3 Verification
 
@@ -796,28 +798,24 @@ As part of Phase 5, the crate structure was refactored for a cleaner, PyTorch-li
 
 2. **`luminal_training` merged into core**: Autograd, optimizers (SGD, Adam, RMSprop), loss functions, and LR schedulers now live in `luminal/src/training/`
 
-3. **Backwards compatibility**: The old `luminal_nn` and `luminal_training` crates still exist as deprecated shims that re-export from core. Existing code using `use luminal_nn::*;` will continue to work with a deprecation warning.
-
-4. **Unified prelude**: The prelude now includes all nn and training types:
+3. **Unified prelude**: The prelude now includes all nn and training types:
    ```rust
    use luminal::prelude::*;
    // Now includes: Linear, ReLU, Autograd, sgd_on_graph, adam_on_graph, etc.
    ```
 
-**Migration guide:**
+**Migration guide (v0.3.0+):**
 
 ```rust
-// Old (still works, but deprecated):
-use luminal_nn::{Linear, ReLU};
-use luminal_training::{Autograd, sgd_on_graph};
-
-// New (recommended):
+// Use the new module paths:
 use luminal::nn::{Linear, ReLU};
 use luminal::training::{Autograd, sgd_on_graph};
 
 // Or via prelude:
 use luminal::prelude::*;
 ```
+
+> **Note:** The deprecated shim crates (`luminal_nn`, `luminal_training`) were removed in v0.3.0.
 
 ### 5.8 Future Improvements
 
@@ -1061,16 +1059,16 @@ cd crates/luminal_cuda && cargo fmt --all && cargo clippy --all-targets -- -D wa
 
 ## Appendix D: Search-Based Compilation Demo
 
-A working demo showcasing search-based compilation is available at `examples/luminal_2_demo/`.
+A working demo showcasing search-based compilation is available at `examples/search_demo/`.
 
 ### Running the Demo
 
 ```bash
 # CUDA backend (requires NVIDIA GPU)
-cargo run -p luminal_2_demo --release --features cuda
+cargo run -p search_demo --release --features cuda
 
 # Metal backend (macOS only)
-cargo run -p luminal_2_demo --release --features metal
+cargo run -p search_demo --release --features metal
 ```
 
 ### What the Demo Shows
@@ -1146,6 +1144,6 @@ let (kernels, gmem_map) = codegen(stitched, GPUArch::CUDA, &cx.dyn_map).unwrap()
 
 | File | Description |
 |------|-------------|
-| `examples/luminal_2_demo/Cargo.toml` | Dependencies and feature flags |
-| `examples/luminal_2_demo/src/main.rs` | Demo implementation |
-| `examples/luminal_2_demo/README.md` | Standalone documentation |
+| `examples/search_demo/Cargo.toml` | Dependencies and feature flags |
+| `examples/search_demo/src/main.rs` | Demo implementation |
+| `examples/search_demo/README.md` | Standalone documentation |

@@ -1,6 +1,6 @@
 use luminal::prelude::*;
-use luminal_nn::{Linear, Swish};
-use luminal_training::{
+use luminal::nn::{Linear, Swish};
+use luminal::training::{
     adam_on_graph, mse_loss, AdamConfig, Autograd, CosineAnnealingLR, LRScheduler,
 };
 use rand::{rngs::ThreadRng, thread_rng, Rng};

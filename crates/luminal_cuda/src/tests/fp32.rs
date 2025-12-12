@@ -2,7 +2,7 @@ use dfdx::prelude::{Module as DfdxModule, *};
 use rand::{rngs::StdRng, SeedableRng};
 
 use luminal::{module::Module, prelude::*};
-use luminal_nn::{Conv1D, Linear, ReLU};
+use luminal::nn::{Conv1D, Linear, ReLU};
 
 use crate::{binary_test, unary_test, CudaCompiler};
 luminal::test_imports!();
@@ -290,7 +290,7 @@ fn test_relu_and_linear() {
 #[test]
 fn test_transformer_encoder_block() {
     let mut cx = Graph::new();
-    let model = luminal_nn::TransformerEncoderBlock::new(3, 4, 1, &mut cx);
+    let model = luminal::nn::TransformerEncoderBlock::new(3, 4, 1, &mut cx);
     model
         .attention
         .w_k
@@ -510,7 +510,7 @@ fn test_conv2d() {
         1., 2., 1., 1., 4., 7., 2.,
     ]);
 
-    let model = luminal_nn::Conv2D::new(
+    let model = luminal::nn::Conv2D::new(
         CH_IN,
         CH_OUT,
         (KERNELX, KERNELY),
