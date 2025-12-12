@@ -829,12 +829,67 @@ use luminal::prelude::*;
 
 ## Phase 6: Complete Training Infrastructure
 
-See detailed implementation in sections below. Key additions:
+**Status**: In Progress
 
-1. **Learning Rate Schedulers** - Cosine, warmup, one-cycle
-2. **Mixed Precision** - FP16 forward, FP32 gradients with loss scaling
-3. **Gradient Checkpointing** - Trade compute for memory
-4. **Gradient Accumulation** - Larger effective batch sizes
+### 6.1 Current State
+
+The training infrastructure (`src/training/`) provides:
+- ✅ Autograd with reverse-mode differentiation
+- ✅ Adam optimizer with momentum tracking
+- ✅ Cross-entropy loss function
+- ✅ Learning rate schedulers (Cosine annealing, warmup)
+- ✅ MLP training works end-to-end on Metal/CUDA
+
+### 6.2 Known Issues
+
+#### Conv2D + Autograd Integration
+**Priority**: High
+
+Conv2D unit tests pass (`cargo test conv2d` in `luminal_metal`), but integrating Conv2D
+into a training loop with autograd causes graph compilation failures:
+
+```
+thread 'main' panicked at src/compiler_utils.rs:498:14:
+called `Option::unwrap()` on a `None` value
+```
+
+This happens after compilation completes (~118s) when executing the first training iteration.
+The issue is likely in how autograd traces through Conv2D's pooling operations.
+
+**Investigation steps**:
+1. Test Conv2D forward pass without autograd (inference only)
+2. Add minimal Conv2D layer to MLP and trace where autograd fails
+3. Check if `pool_last_dim` operations are properly differentiated
+4. Verify tensor shapes through the backward pass
+
+#### Workaround
+The `mnist_cnn` example uses an MLP instead of CNN until this is resolved.
+
+### 6.3 Planned Additions
+
+1. **Mixed Precision Training**
+   - FP16 forward pass, FP32 gradients
+   - Dynamic loss scaling to prevent underflow
+   - Per-layer precision control
+
+2. **Gradient Checkpointing**
+   - Trade compute for memory in large models
+   - Configurable checkpoint intervals
+   - Integration with autograd
+
+3. **Gradient Accumulation**
+   - Larger effective batch sizes
+   - Gradient clipping support
+
+4. **Additional Optimizers**
+   - SGD with momentum
+   - AdamW (weight decay)
+   - LAMB for large batch training
+
+5. **Additional Loss Functions**
+   - MSE loss
+   - Binary cross-entropy
+   - Focal loss
 
 ---
 
