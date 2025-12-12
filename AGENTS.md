@@ -6,9 +6,12 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed contribution guidelines.
 
 ### Structure
 - Core library: `src/` (graph, GraphTensor API, shape tracker, primitive ops)
+  - `src/nn/` - Neural network modules (Linear, ReLU, LayerNorm, Transformer, etc.)
+  - `src/training/` - Autograd, optimizers (SGD, Adam), loss functions, LR schedulers
+  - `src/search/` - Search-based optimization (egglog, behind `search` feature)
 - GPU backends: `crates/luminal_metal/` and `crates/luminal_cuda/`
-- NN modules: `crates/luminal_nn/`
-- Training: `crates/luminal_training/` (autograd, optimizers, loss functions)
+  - Each exports `UnifiedCompiler` for fast/optimal mode switching
+- Legacy shims (deprecated): `crates/luminal_nn/`, `crates/luminal_training/`
 
 ### Testing Commands
 

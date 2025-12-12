@@ -6,7 +6,10 @@ mod prim;
 mod quantized;
 #[macro_use]
 mod unary;
+pub mod unified;
+
 pub use quantized::*;
+pub use unified::UnifiedCudaCompiler;
 
 pub use cudarc::driver::CudaContext;
 pub use elementwise_fusion::ElementwiseFusionCompiler;

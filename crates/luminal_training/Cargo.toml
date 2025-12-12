@@ -1,17 +1,9 @@
 [package]
 name = "luminal_training"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "DEPRECATED: Use luminal::training directly. This crate re-exports luminal::training for backwards compatibility."
+license = "MIT OR Apache-2.0"
 
 [dependencies]
-itertools = "0.12.1"
-luminal = {path="../.."}
-rustc-hash = "1.1.0"
-
-[dev-dependencies]
-dfdx = { version = "0.13", features = ["f16"] }
-paste = "1.0.14"
-rand = "0.8.5"
-luminal_nn = { path = "../luminal_nn" }
+luminal = { path = "../.." }

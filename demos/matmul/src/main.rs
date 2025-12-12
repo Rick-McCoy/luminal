@@ -7,7 +7,7 @@ use luminal::prelude::{
     petgraph::{visit::EdgeRef, Direction},
     *,
 };
-use luminal_2::{
+use luminal::search::{
     codegen::{codegen, stitch_meta_graph_together},
     extract::{make_test_inputs, search},
     run::{assign_buffers, compile_kernels, new_buffer, run_graph},
@@ -15,7 +15,7 @@ use luminal_2::{
     GPUArch, GraphTerm,
 };
 #[cfg(feature = "metal")]
-use luminal_2::{Buffer, Device};
+use luminal::search::{Buffer, Device};
 #[cfg(feature = "metal")]
 use objc2_metal::{MTLBuffer, MTLCreateSystemDefaultDevice, MTLDevice, MTLResourceOptions};
 use rand::{rng, Rng};
@@ -53,7 +53,7 @@ fn main() {
         // Search each subgraph
         for graph_node in new_graph.node_indices().collect_vec() {
             let graph = new_graph.node_weight_mut(graph_node).unwrap();
-            // luminal_2::debug::display_graph(&graph);
+            // luminal::search::debug::display_graph(&graph);
             let inputs = make_test_inputs(graph, &cx.dyn_map, &accs);
             let searched_graph = search(graph, 3, &inputs, arch.clone(), &cx.dyn_map).unwrap();
             // adjust meta-edges
@@ -107,7 +107,7 @@ fn main() {
             }
         }
         let (graph, meta_to_final) = stitch_meta_graph_together(new_graph);
-        luminal_2::debug::display_graph(&graph);
+        luminal::search::debug::display_graph(&graph);
         let mut gmem_to_node_mapping = FxHashMap::default();
         for n in graph.node_indices() {
             if let Some(GraphTerm::GMEM { label }) = graph.node_weight(n) {

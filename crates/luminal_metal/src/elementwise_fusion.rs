@@ -1,3 +1,6 @@
+// Expression is used as a hash key intentionally for simplification caching
+#![allow(clippy::mutable_key_type)]
+
 use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};

@@ -15,7 +15,7 @@ cargo run --release --features metal
 ```
 
 > [!IMPORTANT]  
-> We're undergoing a large transition to "2.0", which introduces large-scale kernel search. This radically simplifies the compiler stack and allows us to discover complex optimizations entirely automatically. Please keep an eye on breaking changes, which usually are staged in the `crates/luminal_2` before being merged into the main crate.
+> Luminal 2.0 is here! The new architecture includes search-based kernel optimization using equality saturation (egglog). This radically simplifies the compiler stack and discovers complex optimizations entirely automatically. Enable with `features = ["search"]`.
 
 ## Usage
 ```rust

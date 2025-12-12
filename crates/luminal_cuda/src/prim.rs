@@ -41,7 +41,7 @@ impl<T: CudaFloat> Operator for CudaCopyToDevice<T> {
             .map(T::from_f32)
             .collect::<Vec<_>>();
         vec![Tensor::new(CudaData(
-            self.0.default_stream().memcpy_stod(&vec).unwrap(),
+            self.0.default_stream().clone_htod(&vec).unwrap(),
         ))]
     }
 }
@@ -66,7 +66,7 @@ impl<T: CudaFloat> Operator for CudaCopyFromDevice<T> {
         let buf = self
             .0
             .default_stream()
-            .memcpy_dtov(get_buffer_from_tensor::<T>(&inp[0].0))
+            .clone_dtoh(get_buffer_from_tensor::<T>(&inp[0].0))
             .unwrap();
         vec![Tensor::new(
             buf.into_iter().map(T::to_f32).collect::<Vec<_>>(),

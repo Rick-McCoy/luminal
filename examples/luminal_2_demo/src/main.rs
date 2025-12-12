@@ -1,11 +1,11 @@
-//! Demo of luminal_2's search-based CUDA compiler
+//! Demo of search-based GPU compilation
 //!
 //! This example demonstrates three key capabilities:
 //!
-//! 1. **Search-Based Compilation**: How luminal_2 translates Luminal graphs to an IR,
-//!    applies egglog rewrites to explore optimizations, and generates CUDA kernels.
+//! 1. **Search-Based Compilation**: How `luminal::search` translates Luminal graphs to an IR,
+//!    applies egglog rewrites to explore optimizations, and generates GPU kernels.
 //!
-//! 2. **Custom Kernel Injection**: Using `custom_kernel` to inject hand-written CUDA
+//! 2. **Custom Kernel Injection**: Using `custom_kernel` to inject hand-written
 //!    kernels into a Luminal computation graph.
 //!
 //! 3. **Matrix Multiply Execution**: Demonstrating the warp-cooperative matmul kernel.
@@ -38,7 +38,7 @@ fn main() {
     }
 
     println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║          luminal_2 Search-Based CUDA Compiler Demo           ║");
+    println!("║          Search-Based GPU Compiler Demo                      ║");
     println!("╚══════════════════════════════════════════════════════════════╝\n");
 
     // Demo 1: Search-based compilation pipeline
@@ -47,7 +47,7 @@ fn main() {
     // Demo 2: Custom CUDA kernel injection
     demo_custom_kernel();
 
-    // Demo 3: Matrix multiply with luminal_2
+    // Demo 3: Matrix multiply with search-based compilation
     demo_matmul();
 
     // Demo 4: Simple MNIST inference with search-optimized kernels
@@ -56,7 +56,7 @@ fn main() {
     println!("\n✅ All demos completed successfully!");
 }
 
-/// Demo 1: Show the luminal_2 search-based compilation pipeline
+/// Demo 1: Show the search-based compilation pipeline
 ///
 /// This demonstrates:
 /// - Translation from Luminal graph to IR
@@ -65,7 +65,7 @@ fn main() {
 /// - Kernel execution through run_graph
 #[cfg(feature = "cuda")]
 fn demo_search_compilation() {
-    use luminal_2::{
+    use luminal::search::{
         codegen::{codegen, stitch_meta_graph_together},
         run::{assign_buffers, compile_kernels, new_buffer, run_graph},
         translate::translate_graph,
@@ -197,7 +197,7 @@ fn demo_search_compilation() {
         tensor_data: &[&[f32]],
         ctx: &std::sync::Arc<cudarc::driver::CudaContext>,
     ) -> Vec<cudarc::driver::CudaSlice<f32>> {
-        use luminal_2::run::htod;
+        use luminal::search::run::htod;
 
         let mut input_buffers = Vec::new();
         let mut tensor_idx = 0;
@@ -242,11 +242,11 @@ fn demo_search_compilation() {
 
 /// Demo 2: Custom CUDA kernel injection
 ///
-/// This shows how to use luminal_2's `custom_kernel` API to inject
+/// This shows how to use the `custom_kernel` API to inject
 /// hand-written CUDA kernels into a Luminal computation graph.
 #[cfg(feature = "cuda")]
 fn demo_custom_kernel() {
-    use luminal_2::{custom_kernel, Kernel};
+    use luminal::search::{custom_kernel, Kernel};
     use luminal_cuda::CudaCompiler;
 
     println!("═══ Demo 2: Custom CUDA Kernel Injection ═══\n");
@@ -316,13 +316,13 @@ fn demo_custom_kernel() {
     println!("⚠️  CUDA feature not enabled. Run with --features cuda\n");
 }
 
-/// Demo 3: Matrix Multiply with luminal_2's warp-cooperative kernel
+/// Demo 3: Matrix Multiply with warp-cooperative kernel
 ///
 /// This shows matrix multiplication through the search-based pipeline,
 /// which uses warp-cooperative 8x8 tile computation on CUDA.
 #[cfg(feature = "cuda")]
 fn demo_matmul() {
-    use luminal_2::{
+    use luminal::search::{
         codegen::{codegen, stitch_meta_graph_together},
         run::{assign_buffers, compile_kernels, new_buffer, run_graph},
         translate::translate_graph,
@@ -456,7 +456,7 @@ fn demo_matmul() {
         tensor_data: &[&[f32]],
         ctx: &std::sync::Arc<cudarc::driver::CudaContext>,
     ) -> Vec<cudarc::driver::CudaSlice<f32>> {
-        use luminal_2::run::htod;
+        use luminal::search::run::htod;
         let mut input_buffers = Vec::new();
         let mut tensor_idx = 0;
         for (_node, label) in sorted_gmem {
@@ -499,11 +499,11 @@ fn demo_matmul() {
 
 /// Demo 4: Simple MNIST-style inference with search-optimized kernels
 ///
-/// This demonstrates a simple MLP forward pass using the luminal_2 pipeline,
+/// This demonstrates a simple MLP forward pass using the search-based pipeline,
 /// showing how larger networks would be optimized.
 #[cfg(feature = "cuda")]
 fn demo_mnist_inference() {
-    use luminal_2::{
+    use luminal::search::{
         codegen::{codegen, stitch_meta_graph_together},
         run::compile_kernels,
         translate::translate_graph,

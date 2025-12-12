@@ -1,3 +1,6 @@
+// UnsafeCell is intentionally used with Arc for single-threaded shared mutable state
+#![allow(clippy::arc_with_non_send_sync)]
+
 use std::{
     cell::UnsafeCell,
     collections::{BTreeMap, BTreeSet},

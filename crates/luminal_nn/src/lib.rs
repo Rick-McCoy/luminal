@@ -1,19 +1,7 @@
-mod activation;
-pub use activation::*;
-mod convolution;
-pub use convolution::*;
-mod dropout;
-pub use dropout::*;
-mod embedding;
-pub use embedding::*;
-mod linear;
-pub use linear::*;
-mod norm;
-pub use norm::*;
-mod pooling;
-pub use pooling::*;
-mod recurrent;
-pub use recurrent::*;
-mod transformer;
-pub use transformer::*;
-pub mod utils;
+//! This crate is deprecated. Please use `luminal::nn` instead.
+//!
+//! This module re-exports the `nn` module from the core `luminal` crate
+//! for backwards compatibility.
+
+#[deprecated(since = "0.3.0", note = "Use luminal::nn directly instead of luminal_nn")]
+pub use luminal::nn::*;

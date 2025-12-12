@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use luminal::prelude::*;
-//use luminal_2::{
+//use luminal::search::{
 // codegen::codegen, extract::search, run::run_graph, translate::translate_graph,
 // utils::build_search_space, GPUArch,
 //};

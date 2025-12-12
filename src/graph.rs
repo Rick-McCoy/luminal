@@ -155,7 +155,7 @@ impl Graph {
                     self.graph
                         .edges_directed(i, Direction::Outgoing)
                         .filter_map(|e| e.weight().as_data().map(|i| (e.source(), i)))
-                        .group_by(|(_, (_, i, _))| *i)
+                        .chunk_by(|(_, (_, i, _))| *i)
                         .into_iter()
                         .map(|(ind, g)| ((i, ind), g.count()))
                         .collect::<Vec<_>>()

@@ -370,7 +370,7 @@ impl<T> MetalKernel for QuantizedMatmul<T> {
             encoder.set_u32(14, 1);
             encoder.set_threadgroup_memory_length(0, 8192);
             encoder.dispatch_thread_groups(
-                MTLSize::new((m as u64 + 31) / 32, (n as u64 + 63) / 64, 1),
+                MTLSize::new((m as u64).div_ceil(32), (n as u64).div_ceil(64), 1),
                 MTLSize::new(128, 1, 1),
             );
         }
@@ -864,7 +864,7 @@ mod tests {
         tests::{assert_close, assert_close_precision, random_vec_rng},
     };
     use metal_rs::{Device, MTLResourceOptions};
-    use rand::{thread_rng, Rng};
+    use rand::{rng, Rng};
 
     use crate::{
         quantized::MetalQuantizedCompiler, BufferCompilers, MetalBuffer, MetalCompilerPreBuffer,
@@ -887,8 +887,8 @@ mod tests {
 
     #[test]
     fn test_quantized_matvec() {
-        let mut rng = thread_rng();
-        let mat_data: Vec<i8> = (0..(1024 * 512)).map(|_| rng.gen_range(0..5)).collect();
+        let mut rng = rng();
+        let mat_data: Vec<i8> = (0..(1024 * 512)).map(|_| rng.random_range(0..5)).collect();
         let vec_data = random_vec_rng(1024, &mut rng);
         let mut cx = Graph::new();
         let weights = cx.tensor((512, 1024)).keep();
@@ -936,8 +936,8 @@ mod tests {
 
     #[test]
     fn test_quantized_matmul() {
-        let mut rng = thread_rng();
-        let mat_data: Vec<i8> = (0..(1024 * 512)).map(|_| rng.gen_range(0..5)).collect();
+        let mut rng = rng();
+        let mat_data: Vec<i8> = (0..(1024 * 512)).map(|_| rng.random_range(0..5)).collect();
         let inp_mat_data = random_vec_rng(1024 * 16, &mut rng);
         let mut cx = Graph::new();
         let weights = cx.tensor((512, 1024)).keep();
@@ -987,8 +987,8 @@ mod tests {
 
     #[test]
     fn test_quantized_matmul_fp16() {
-        let mut rng = thread_rng();
-        let mat_data: Vec<i8> = (0..(1024 * 512)).map(|_| rng.gen_range(0..5)).collect();
+        let mut rng = rng();
+        let mat_data: Vec<i8> = (0..(1024 * 512)).map(|_| rng.random_range(0..5)).collect();
         let inp_mat_data = random_vec_rng(1024 * 16, &mut rng);
         let mut cx = Graph::new();
         let weights = cx.tensor((512, 1024)).keep();

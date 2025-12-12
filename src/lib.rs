@@ -4,8 +4,12 @@ pub mod graph;
 pub mod graph_tensor;
 pub mod hl_ops;
 pub mod module;
+pub mod nn;
 pub mod op;
+pub mod search;
 pub mod shape;
+pub mod training;
+pub mod unified;
 
 pub mod tests;
 
@@ -17,8 +21,11 @@ pub mod prelude {
     pub use crate::hl_ops::binary::F32Pow;
     pub use crate::hl_ops::*;
     pub use crate::module::*;
+    pub use crate::nn::*;
     pub use crate::op::*;
     pub use crate::shape::*;
+    pub use crate::training::*;
+    pub use crate::unified::CompilationMode;
     pub use half::{bf16, f16};
     pub use petgraph;
     pub use petgraph::stable_graph::NodeIndex;

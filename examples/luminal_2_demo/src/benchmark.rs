@@ -1,10 +1,10 @@
 //! Benchmark for Phase 4 search space improvements
 //!
-//! Run with: cargo run -p luminal_2_demo --release --features cuda -- benchmark
-//! Run search benchmark: cargo run -p luminal_2_demo --release --features cuda -- search
+//! Run with: cargo run --release --features cuda -- benchmark
+//! Run search benchmark: cargo run --release --features cuda -- search
 
 use luminal::prelude::*;
-use luminal_2::{
+use luminal::search::{
     codegen::{codegen, stitch_meta_graph_together},
     extract::{make_test_inputs, search},
     run::compile_kernels,

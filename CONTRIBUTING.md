@@ -11,14 +11,16 @@ luminal/
 │   ├── graph_tensor.rs    # GraphTensor API
 │   ├── shape/             # ShapeTracker & symbolic dimensions
 │   ├── hl_ops/            # High-level operations
-│   └── op.rs              # Primitive operations
+│   ├── op.rs              # Primitive operations
+│   ├── nn/                # Neural network modules (Linear, ReLU, Transformer, etc.)
+│   ├── training/          # Autograd, optimizers, loss functions
+│   └── search/            # Search-based optimization (egglog, behind "search" feature)
 ├── crates/
 │   ├── luminal_cpu/       # CPU compiler & ops
-│   ├── luminal_metal/     # Metal (macOS) compiler
-│   ├── luminal_cuda/      # CUDA (NVIDIA) compiler
-│   ├── luminal_nn/        # Neural network modules
-│   ├── luminal_training/  # Autograd, optimizers, loss functions
-│   └── luminal_2/         # Next-gen kernel search (experimental)
+│   ├── luminal_metal/     # Metal (macOS) compiler + UnifiedMetalCompiler
+│   ├── luminal_cuda/      # CUDA (NVIDIA) compiler + UnifiedCudaCompiler
+│   ├── luminal_nn/        # [Deprecated] Re-exports luminal::nn
+│   └── luminal_training/  # [Deprecated] Re-exports luminal::training
 ├── examples/              # Full model implementations
 │   ├── llama/             # LLaMA 3 inference
 │   ├── phi/               # Phi-3 inference
@@ -161,11 +163,11 @@ cx.compile(
 
 ### Adding a New NN Module
 
-1. Create your module in `crates/luminal_nn/src/`:
+1. Create your module in `src/nn/`:
 
 ```rust
-// crates/luminal_nn/src/my_module.rs
-use luminal::prelude::*;
+// src/nn/my_module.rs
+use crate::prelude::*;
 
 pub struct MyModule {
     pub weight: GraphTensor,
@@ -193,12 +195,12 @@ impl SerializeModule for MyModule {
 }
 ```
 
-2. Export it from `lib.rs`
+2. Export it from `src/nn/mod.rs`
 3. Add tests comparing against PyTorch/dfdx
 
 ### Adding a New Optimizer
 
-See `crates/luminal_training/src/optimizer.rs` for the SGD implementation pattern.
+See `src/training/optimizer.rs` for the SGD implementation pattern.
 
 ### Adding a Backend Optimization
 

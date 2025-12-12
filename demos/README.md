@@ -1,10 +1,10 @@
 # Demos
 
-This folder contains standalone demonstrations of Luminal's experimental features.
+This folder contains standalone demonstrations of Luminal's features.
 
 ## matmul (HackerNews Demo)
 
-Demonstrates the search-based kernel generation system (luminal_2). This demo searches for optimal GPU kernel implementations at compile time.
+Demonstrates the search-based kernel generation system. This demo searches for optimal GPU kernel implementations at compile time using equality saturation (egglog).
 
 ### Prerequisites
 
@@ -31,7 +31,7 @@ This will:
 
 ## flash_attention
 
-Experimental e-graph rewriting for Flash Attention pattern discovery. This is research code for the luminal_2 search system.
+Experimental e-graph rewriting for Flash Attention pattern discovery.
 
 ```bash
 cd demos/flash_attention
@@ -40,5 +40,5 @@ cargo run --release
 
 ---
 
-> **Note:** These demos use experimental features from `crates/luminal_2` and may require nightly Rust features or specific hardware.
+> **Note:** These demos use the `search` feature from the core `luminal` crate and may require specific hardware.
 

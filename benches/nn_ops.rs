@@ -4,8 +4,8 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use luminal::prelude::*;
-use luminal_nn::{Conv2D, Linear, MaxPool2D, RMSNorm};
-use rand::{rngs::StdRng, SeedableRng};
+use luminal::nn::{Conv2D, Linear, MaxPool2D, RMSNorm};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 
 fn random_vec(size: usize) -> Vec<f32> {
     let mut rng = StdRng::seed_from_u64(42);
@@ -33,7 +33,7 @@ fn bench_linear(c: &mut Criterion) {
                     let input = cx.tensor((batch_size, in_f)).set(input_data.clone());
                     let linear = Linear::new(in_f, out_f, false, &mut cx);
                     linear.weight.set(weight_data.clone());
-                    let mut out = linear.forward(input).retrieve();
+                    let out = linear.forward(input).retrieve();
                     cx.execute();
                     out.data()
                 })
@@ -76,7 +76,7 @@ fn bench_conv2d(c: &mut Criterion) {
                         &mut cx,
                     );
                     conv.weight.set(weight_data.clone());
-                    let mut out = conv.forward(input).retrieve();
+                    let out = conv.forward(input).retrieve();
                     cx.execute();
                     out.data()
                 })
@@ -107,7 +107,7 @@ fn bench_maxpool2d(c: &mut Criterion) {
                         .tensor((batch_size, channels, s, s))
                         .set(input_data.clone());
                     let pool = MaxPool2D::new((2, 2), (2, 2));
-                    let mut out = pool.forward(input).retrieve();
+                    let out = pool.forward(input).retrieve();
                     cx.execute();
                     out.data()
                 })
@@ -132,7 +132,7 @@ fn bench_rmsnorm(c: &mut Criterion) {
                 let mut cx = Graph::new();
                 let input = cx.tensor((batch_size, d)).set(input_data.clone());
                 let norm = RMSNorm::new(d, 1e-5, &mut cx);
-                let mut out = norm.forward(input).retrieve();
+                let out = norm.forward(input).retrieve();
                 cx.execute();
                 out.data()
             })
@@ -159,7 +159,7 @@ fn bench_matmul(c: &mut Criterion) {
                     let mut cx = Graph::new();
                     let a = cx.tensor((s, s)).set(a_data.clone());
                     let b_tensor = cx.tensor((s, s)).set(b_data.clone());
-                    let mut out = a.matmul(b_tensor).retrieve();
+                    let out = a.matmul(b_tensor).retrieve();
                     cx.execute();
                     out.data()
                 })

@@ -1,17 +1,9 @@
 [package]
 name = "luminal_nn"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "DEPRECATED: Use luminal::nn directly. This crate re-exports luminal::nn for backwards compatibility."
+license = "MIT OR Apache-2.0"
 
 [dependencies]
-itertools = "0.12.1"
 luminal = { path = "../.." }
-rustc-hash = "1.1.0"
-rand = "0.9.2"
-
-[dev-dependencies]
-dfdx = { version = "0.13", features = ["f16"] }
-paste = "1.0.14"
-candle-core = "0.8"
