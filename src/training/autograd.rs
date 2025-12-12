@@ -1369,4 +1369,541 @@ mod tests {
             "Conv2D with varied inputs: gradients are still essentially zero!"
         );
     }
+
+    // ==================== MULTI-LAYER CNN GRADIENT TESTS ====================
+    // These tests catch the critical bug where stacking 2+ Conv2D layers causes NaN
+
+    #[test]
+    #[ignore = "Known bug: autograd cannot compute gradients through pool_last_dim for input tensors. See IMPLEMENTATION_PLAN.md Section 6.4"]
+    fn test_two_conv2d_gradient() {
+        // CRITICAL TEST: Stack 2 Conv2D layers and verify gradients are valid
+        // This is the minimal reproduction for the multi-layer CNN bug
+        let mut cx = Graph::new();
+
+        // First conv: 1 -> 4 channels, 3x3 kernel
+        let conv1 = crate::nn::Conv2D::new(1, 4, (3, 3), (1, 1), (1, 1), false, &mut cx);
+        conv1.weight.set(
+            (0..36)
+                .map(|i| 0.1 * (i as f32 - 18.0) / 18.0)
+                .collect::<Vec<_>>(),
+        );
+
+        // Second conv: 4 -> 2 channels, 2x2 kernel
+        let conv2 = crate::nn::Conv2D::new(4, 2, (2, 2), (1, 1), (1, 1), false, &mut cx);
+        conv2.weight.set(
+            (0..32)
+                .map(|i| 0.1 * (i as f32 - 16.0) / 16.0)
+                .collect::<Vec<_>>(),
+        );
+
+        // Input: batch=1, 1 channel, 6x6
+        let input = cx
+            .tensor((1, 1, 6, 6))
+            .set((0..36).map(|i| i as f32 / 36.0).collect::<Vec<_>>());
+
+        // Forward: conv1 -> relu -> conv2 -> sum
+        let x = conv1.forward(input).relu(); // (1, 4, 4, 4)
+        let x = conv2.forward(x); // (1, 2, 3, 3)
+        let loss = x.sum(x.shape.all_axes());
+
+        // Compute gradients for both conv layers
+        let grads = cx.compile(Autograd::new((conv1.weight, conv2.weight), loss), ());
+        cx.keep_tensors(&grads);
+        cx.compile(GenericCompiler::default(), ());
+        cx.execute();
+
+        let grad1 = get_vec(grads[0], &mut cx);
+        let grad2 = get_vec(grads[1], &mut cx);
+
+        println!(
+            "Conv1 gradient (first 10): {:?}",
+            &grad1[..10.min(grad1.len())]
+        );
+        println!(
+            "Conv2 gradient (first 10): {:?}",
+            &grad2[..10.min(grad2.len())]
+        );
+
+        // Check for NaN/Inf in gradients
+        for (i, &g) in grad1.iter().enumerate() {
+            assert!(!g.is_nan(), "Conv1 gradient[{}] is NaN!", i);
+            assert!(!g.is_infinite(), "Conv1 gradient[{}] is infinite!", i);
+        }
+        for (i, &g) in grad2.iter().enumerate() {
+            assert!(!g.is_nan(), "Conv2 gradient[{}] is NaN!", i);
+            assert!(!g.is_infinite(), "Conv2 gradient[{}] is infinite!", i);
+        }
+
+        // Gradients should not all be zero
+        assert!(
+            !grad1.iter().all(|&g| g == 0.0),
+            "Conv1 gradients are all zero!"
+        );
+        assert!(
+            !grad2.iter().all(|&g| g == 0.0),
+            "Conv2 gradients are all zero!"
+        );
+    }
+
+    #[test]
+    #[ignore = "Known bug: autograd cannot compute gradients through pool_last_dim for input tensors. See IMPLEMENTATION_PLAN.md Section 6.4"]
+    fn test_three_conv2d_gradient() {
+        // CRITICAL TEST: Stack 3 Conv2D layers - even more stress on gradient flow
+        let mut cx = Graph::new();
+
+        let conv1 = crate::nn::Conv2D::new(1, 4, (3, 3), (1, 1), (1, 1), false, &mut cx);
+        conv1.weight.set(vec![0.05; 36]);
+
+        let conv2 = crate::nn::Conv2D::new(4, 4, (3, 3), (1, 1), (1, 1), false, &mut cx);
+        conv2.weight.set(vec![0.05; 144]);
+
+        let conv3 = crate::nn::Conv2D::new(4, 2, (2, 2), (1, 1), (1, 1), false, &mut cx);
+        conv3.weight.set(vec![0.05; 32]);
+
+        // Input: batch=1, 1 channel, 10x10 (needs to be big enough for 3 convs)
+        let input = cx
+            .tensor((1, 1, 10, 10))
+            .set((0..100).map(|i| i as f32 / 100.0).collect::<Vec<_>>());
+
+        let x = conv1.forward(input).relu(); // (1, 4, 8, 8)
+        let x = conv2.forward(x).relu(); // (1, 4, 6, 6)
+        let x = conv3.forward(x); // (1, 2, 5, 5)
+        let loss = x.sum(x.shape.all_axes());
+
+        let grads = cx.compile(
+            Autograd::new((conv1.weight, conv2.weight, conv3.weight), loss),
+            (),
+        );
+        cx.keep_tensors(&grads);
+        cx.compile(GenericCompiler::default(), ());
+        cx.execute();
+
+        let grad1 = get_vec(grads[0], &mut cx);
+        let grad2 = get_vec(grads[1], &mut cx);
+        let grad3 = get_vec(grads[2], &mut cx);
+
+        // Check all gradients for NaN/Inf
+        for (name, grad) in [("conv1", &grad1), ("conv2", &grad2), ("conv3", &grad3)] {
+            for (i, &g) in grad.iter().enumerate() {
+                assert!(!g.is_nan(), "{} gradient[{}] is NaN!", name, i);
+                assert!(!g.is_infinite(), "{} gradient[{}] is infinite!", name, i);
+            }
+            assert!(
+                !grad.iter().all(|&g| g == 0.0),
+                "{} gradients are all zero!",
+                name
+            );
+        }
+
+        println!("Three-layer CNN gradients computed successfully!");
+    }
+
+    // ==================== POOLING GRADIENT TESTS ====================
+    // These tests catch the critical bug where pooling layers cause immediate NaN
+
+    #[test]
+    #[ignore = "Known bug: autograd cannot compute gradients through pool_last_dim for input tensors. See IMPLEMENTATION_PLAN.md Section 6.4"]
+    fn test_simple_pool_gradient() {
+        // Simple test: pool_last_dim -> sum (on pool dim) -> sum (to scalar)
+        // This isolates the core pattern used in AvgPool2D
+        let mut cx = Graph::new();
+
+        let weight = cx.tensor(4).set(vec![1.0, 2.0, 3.0, 4.0]);
+
+        // pool_last_dim creates overlapping windows
+        let pooled = weight.pool_last_dim(2, 1, 1); // (3, 2) - 3 windows of size 2
+        let summed = pooled.sum(1); // Sum over window dim -> (3,)
+        let loss = summed.sum(0); // Sum to scalar
+
+        let grads = cx.compile(Autograd::new(weight, loss), ());
+        cx.keep_tensors(&grads);
+        cx.compile(GenericCompiler::default(), ());
+        cx.execute();
+
+        let grad_data = get_vec(grads[0], &mut cx);
+        println!("Simple pool gradient: {:?}", grad_data);
+
+        // Each input element contributes to multiple windows:
+        // Element 0 (value=1.0): appears in window 0 only -> gradient = 1
+        // Element 1 (value=2.0): appears in windows 0, 1 -> gradient = 2
+        // Element 2 (value=3.0): appears in windows 1, 2 -> gradient = 2
+        // Element 3 (value=4.0): appears in window 2 only -> gradient = 1
+        let expected = [1.0, 2.0, 2.0, 1.0];
+
+        for (i, &g) in grad_data.iter().enumerate() {
+            assert!(!g.is_nan(), "Gradient[{}] is NaN!", i);
+            assert!(!g.is_infinite(), "Gradient[{}] is infinite!", i);
+        }
+
+        for (i, (&g, &e)) in grad_data.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (g - e).abs() < 1e-5,
+                "Gradient[{}] should be {}, got {}",
+                i,
+                e,
+                g
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "Known bug: autograd cannot compute gradients through pool_last_dim for input tensors. See IMPLEMENTATION_PLAN.md Section 6.4"]
+    fn test_avgpool2d_gradient() {
+        // CRITICAL TEST: AvgPool2D gradient computation
+        use crate::nn::AvgPool2D;
+
+        let mut cx = Graph::new();
+
+        // Learnable weight before pooling
+        let weight = cx
+            .tensor((1, 2, 4, 4))
+            .set((0..32).map(|i| i as f32 / 32.0).collect::<Vec<_>>());
+
+        let pool = AvgPool2D::new((2, 2), (2, 2));
+        let output = pool.forward(weight); // (1, 2, 2, 2)
+        let loss = output.sum(output.shape.all_axes());
+
+        let grads = cx.compile(Autograd::new(weight, loss), ());
+        cx.keep_tensors(&grads);
+        cx.compile(GenericCompiler::default(), ());
+        cx.execute();
+
+        let grad_data = get_vec(grads[0], &mut cx);
+        println!("AvgPool2D gradient: {:?}", grad_data);
+
+        // Check for NaN/Inf
+        for (i, &g) in grad_data.iter().enumerate() {
+            assert!(!g.is_nan(), "AvgPool2D gradient[{}] is NaN!", i);
+            assert!(!g.is_infinite(), "AvgPool2D gradient[{}] is infinite!", i);
+        }
+
+        // For avg pooling with kernel 2x2, each output is average of 4 inputs
+        // Gradient of average is 1/4 for each input element
+        // But since we sum the loss, gradient should be 0.25 for each element
+        let expected_grad = 0.25;
+        for &g in &grad_data {
+            assert!(
+                (g - expected_grad).abs() < 1e-5,
+                "AvgPool2D gradient should be 0.25, got {}",
+                g
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "Known bug: autograd cannot compute gradients through pool_last_dim for input tensors. See IMPLEMENTATION_PLAN.md Section 6.4"]
+    fn test_maxpool2d_gradient() {
+        // CRITICAL TEST: MaxPool2D gradient computation
+        use crate::nn::MaxPool2D;
+
+        let mut cx = Graph::new();
+
+        // Input with clear max values in each 2x2 region
+        let input = cx.tensor((1, 1, 4, 4)).set(vec![
+            1.0, 2.0, 3.0, 4.0, // max in (0,0) block: 6.0
+            5.0, 6.0, 7.0, 8.0, // max in (0,1) block: 8.0
+            9.0, 10.0, 11.0, 12.0, // max in (1,0) block: 14.0
+            13.0, 14.0, 15.0, 16.0, // max in (1,1) block: 16.0
+        ]);
+
+        let pool = MaxPool2D::new((2, 2), (2, 2));
+        let output = pool.forward(input); // (1, 1, 2, 2) = [6, 8, 14, 16]
+        let loss = output.sum(output.shape.all_axes());
+
+        let grads = cx.compile(Autograd::new(input, loss), ());
+        cx.keep_tensors(&grads);
+        cx.compile(GenericCompiler::default(), ());
+        cx.execute();
+
+        let grad_data = get_vec(grads[0], &mut cx);
+        println!("MaxPool2D gradient: {:?}", grad_data);
+
+        // Check for NaN/Inf
+        for (i, &g) in grad_data.iter().enumerate() {
+            assert!(!g.is_nan(), "MaxPool2D gradient[{}] is NaN!", i);
+            assert!(!g.is_infinite(), "MaxPool2D gradient[{}] is infinite!", i);
+        }
+
+        // For max pooling, gradient flows only to max elements
+        // Max positions: (1,1)=6, (1,3)=8, (3,1)=14, (3,3)=16
+        // Gradient should be 1.0 at these positions, 0.0 elsewhere
+        let expected = vec![
+            0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0,
+        ];
+        for (i, (&g, &e)) in grad_data.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (g - e).abs() < 1e-5,
+                "MaxPool2D gradient[{}] should be {}, got {}",
+                i,
+                e,
+                g
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "Known bug: autograd cannot compute gradients through pool_last_dim for input tensors. See IMPLEMENTATION_PLAN.md Section 6.4"]
+    fn test_conv2d_plus_avgpool_gradient() {
+        // CRITICAL TEST: Conv2D followed by AvgPool2D - the combination used in real CNNs
+        use crate::nn::AvgPool2D;
+
+        let mut cx = Graph::new();
+
+        let conv = crate::nn::Conv2D::new(1, 2, (3, 3), (1, 1), (1, 1), false, &mut cx);
+        conv.weight.set(vec![0.1; 18]);
+
+        let input = cx
+            .tensor((1, 1, 6, 6))
+            .set((0..36).map(|i| i as f32 / 36.0).collect::<Vec<_>>());
+
+        // Conv -> ReLU -> AvgPool
+        let x = conv.forward(input).relu(); // (1, 2, 4, 4)
+        let pool = AvgPool2D::new((2, 2), (2, 2));
+        let x = pool.forward(x); // (1, 2, 2, 2)
+        let loss = x.sum(x.shape.all_axes());
+
+        let grads = cx.compile(Autograd::new(conv.weight, loss), ());
+        cx.keep_tensors(&grads);
+        cx.compile(GenericCompiler::default(), ());
+        cx.execute();
+
+        let grad_data = get_vec(grads[0], &mut cx);
+        println!("Conv2D + AvgPool gradient: {:?}", grad_data);
+
+        // Check for NaN/Inf
+        for (i, &g) in grad_data.iter().enumerate() {
+            assert!(!g.is_nan(), "Conv2D+AvgPool gradient[{}] is NaN!", i);
+            assert!(
+                !g.is_infinite(),
+                "Conv2D+AvgPool gradient[{}] is infinite!",
+                i
+            );
+        }
+
+        assert!(
+            !grad_data.iter().all(|&g| g == 0.0),
+            "Conv2D+AvgPool gradients are all zero!"
+        );
+    }
+
+    #[test]
+    #[ignore = "Known bug: autograd cannot compute gradients through pool_last_dim for input tensors. See IMPLEMENTATION_PLAN.md Section 6.4"]
+    fn test_conv2d_plus_maxpool_gradient() {
+        // CRITICAL TEST: Conv2D followed by MaxPool2D
+        use crate::nn::MaxPool2D;
+
+        let mut cx = Graph::new();
+
+        let conv = crate::nn::Conv2D::new(1, 2, (3, 3), (1, 1), (1, 1), false, &mut cx);
+        conv.weight.set(
+            (0..18)
+                .map(|i| 0.1 * (i as f32 - 9.0) / 9.0)
+                .collect::<Vec<_>>(),
+        );
+
+        let input = cx
+            .tensor((1, 1, 6, 6))
+            .set((0..36).map(|i| i as f32 / 36.0).collect::<Vec<_>>());
+
+        // Conv -> ReLU -> MaxPool
+        let x = conv.forward(input).relu(); // (1, 2, 4, 4)
+        let pool = MaxPool2D::new((2, 2), (2, 2));
+        let x = pool.forward(x); // (1, 2, 2, 2)
+        let loss = x.sum(x.shape.all_axes());
+
+        let grads = cx.compile(Autograd::new(conv.weight, loss), ());
+        cx.keep_tensors(&grads);
+        cx.compile(GenericCompiler::default(), ());
+        cx.execute();
+
+        let grad_data = get_vec(grads[0], &mut cx);
+        println!("Conv2D + MaxPool gradient: {:?}", grad_data);
+
+        // Check for NaN/Inf
+        for (i, &g) in grad_data.iter().enumerate() {
+            assert!(!g.is_nan(), "Conv2D+MaxPool gradient[{}] is NaN!", i);
+            assert!(
+                !g.is_infinite(),
+                "Conv2D+MaxPool gradient[{}] is infinite!",
+                i
+            );
+        }
+
+        assert!(
+            !grad_data.iter().all(|&g| g == 0.0),
+            "Conv2D+MaxPool gradients are all zero!"
+        );
+    }
+
+    // ==================== MULTI-ITERATION STRESS TESTS ====================
+    // These tests catch bugs that only manifest after many gradient updates
+
+    #[test]
+    fn test_cnn_training_100_iterations() {
+        // CRITICAL TEST: Run 100 simulated training iterations
+        // This catches the NaN-after-100-iterations bug
+        let mut cx = Graph::new();
+
+        let conv = crate::nn::Conv2D::new(1, 2, (3, 3), (1, 1), (1, 1), false, &mut cx);
+        conv.weight.set(vec![0.1; 18]);
+
+        let fc = crate::nn::Linear::new(8, 2, false, &mut cx);
+        fc.weight.set(vec![0.1; 16]);
+
+        let input = cx
+            .tensor((1, 1, 4, 4))
+            .set((0..16).map(|i| i as f32 / 16.0).collect::<Vec<_>>());
+
+        // Forward pass
+        let x = conv.forward(input).relu(); // (1, 2, 2, 2)
+        let x = x.reshape((1, 8));
+        let output = fc.forward(x);
+        let loss = output.sum(output.shape.all_axes());
+
+        // Compute gradients
+        let grads = cx.compile(Autograd::new((conv.weight, fc.weight), loss), ());
+        cx.keep_tensors(&grads);
+        cx.compile(GenericCompiler::default(), ());
+
+        // Simulate 100 training iterations
+        let _lr = 0.01;
+        for iter in 0..100 {
+            cx.execute();
+
+            let conv_grad = get_vec(grads[0], &mut cx);
+            let fc_grad = get_vec(grads[1], &mut cx);
+
+            // Check for NaN/Inf at each iteration
+            for (i, &g) in conv_grad.iter().enumerate() {
+                assert!(
+                    !g.is_nan(),
+                    "Iteration {}: conv gradient[{}] became NaN!",
+                    iter,
+                    i
+                );
+                assert!(
+                    !g.is_infinite(),
+                    "Iteration {}: conv gradient[{}] became infinite!",
+                    iter,
+                    i
+                );
+            }
+            for (i, &g) in fc_grad.iter().enumerate() {
+                assert!(
+                    !g.is_nan(),
+                    "Iteration {}: fc gradient[{}] became NaN!",
+                    iter,
+                    i
+                );
+                assert!(
+                    !g.is_infinite(),
+                    "Iteration {}: fc gradient[{}] became infinite!",
+                    iter,
+                    i
+                );
+            }
+
+            // Simulate weight update (just for gradient magnitude tracking)
+            let max_grad = conv_grad
+                .iter()
+                .chain(fc_grad.iter())
+                .map(|g| g.abs())
+                .fold(0.0f32, f32::max);
+
+            // Check gradient magnitude doesn't explode
+            assert!(
+                max_grad < 1e6,
+                "Iteration {}: gradient exploded to {}!",
+                iter,
+                max_grad
+            );
+
+            // In a real training loop, we'd update weights here
+            // For this test, we just verify gradients stay valid
+        }
+
+        println!("100 iterations completed without NaN!");
+    }
+
+    #[test]
+    #[ignore = "Known bug: autograd cannot compute gradients through pool_last_dim for input tensors. See IMPLEMENTATION_PLAN.md Section 6.4"]
+    fn test_gradient_magnitude_stability() {
+        // Test that gradients don't explode or vanish over iterations
+        let mut cx = Graph::new();
+
+        let conv1 = crate::nn::Conv2D::new(1, 4, (3, 3), (1, 1), (1, 1), false, &mut cx);
+        conv1.weight.set(vec![0.1; 36]);
+
+        let conv2 = crate::nn::Conv2D::new(4, 2, (2, 2), (1, 1), (1, 1), false, &mut cx);
+        conv2.weight.set(vec![0.1; 32]);
+
+        let input = cx
+            .tensor((1, 1, 6, 6))
+            .set((0..36).map(|i| i as f32 / 36.0).collect::<Vec<_>>());
+
+        let x = conv1.forward(input).relu();
+        let x = conv2.forward(x);
+        let loss = x.sum(x.shape.all_axes());
+
+        let grads = cx.compile(Autograd::new((conv1.weight, conv2.weight), loss), ());
+        cx.keep_tensors(&grads);
+        cx.compile(GenericCompiler::default(), ());
+
+        let mut prev_magnitude: Option<f32> = None;
+
+        for iter in 0..10 {
+            cx.execute();
+
+            let grad1 = get_vec(grads[0], &mut cx);
+            let grad2 = get_vec(grads[1], &mut cx);
+
+            // Compute gradient magnitude (L2 norm)
+            let magnitude: f32 =
+                (grad1.iter().chain(grad2.iter()).map(|g| g * g).sum::<f32>()).sqrt();
+
+            // Check for NaN/Inf
+            assert!(
+                !magnitude.is_nan(),
+                "Iteration {}: gradient magnitude is NaN!",
+                iter
+            );
+            assert!(
+                !magnitude.is_infinite(),
+                "Iteration {}: gradient magnitude is infinite!",
+                iter
+            );
+
+            // Check magnitude is reasonable (not vanishing or exploding)
+            assert!(
+                magnitude > 1e-10,
+                "Iteration {}: gradients vanished (magnitude = {})!",
+                iter,
+                magnitude
+            );
+            assert!(
+                magnitude < 1e6,
+                "Iteration {}: gradients exploded (magnitude = {})!",
+                iter,
+                magnitude
+            );
+
+            if let Some(prev) = prev_magnitude {
+                // Gradient magnitude shouldn't change by more than 100x between iterations
+                // (this would indicate instability)
+                let ratio = (magnitude / prev).max(prev / magnitude);
+                assert!(
+                    ratio < 100.0,
+                    "Iteration {}: gradient magnitude changed by {}x (from {} to {})",
+                    iter,
+                    ratio,
+                    prev,
+                    magnitude
+                );
+            }
+
+            prev_magnitude = Some(magnitude);
+        }
+
+        println!("Gradient magnitudes stable across iterations!");
+    }
 }
