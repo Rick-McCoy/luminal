@@ -6,8 +6,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     op::{
-        Add, Contiguous, Exp2, Function, LessThan, Log2, MaxReduce, Mod, Mul, Recip, Sin, Sqrt,
-        SumReduce,
+        Add, Contiguous, Exp2, Function, LessThan, Log2, MaxReduce, Mod, Mul, PoolLastDim,
+        PoolLastDimBackward, Recip, Sin, Sqrt, SumReduce,
     },
     prelude::{tinyvec::ArrayVec, *},
 };
@@ -142,6 +142,43 @@ impl Compiler for Autograd {
                     let reduced = GraphTensor::from_id(fwd_node, prev_grad.shape, graph_ref);
                     let grad = inps[0].eq(reduced) * prev_grad;
                     add_grad(grad, inps[0], graph, &mut grads);
+                }
+            } else if let Some(pool_op) = unsafe { graph_ref.as_ref().unwrap() }
+                .try_get_op::<PoolLastDim>(fwd_node)
+                .cloned()
+            {
+                // f(x) = pool_last_dim(x) - creates overlapping windows
+                // f'(x) = scatter-add of gradients back to input positions
+                if valid_set.contains(&inps[0].id) {
+                    let input_shape = inps[0].shape.shape_usize();
+                    let input_last_dim = *input_shape.last().unwrap();
+
+                    // Compute forward output shape: (..., num_windows, kernel)
+                    let full_kernel =
+                        pool_op.kernel + (pool_op.kernel - 1) * (pool_op.dilation - 1);
+                    let num_windows = (input_last_dim - full_kernel) / pool_op.stride + 1;
+                    let mut grad_shape: Vec<Expression> =
+                        input_shape.iter().map(|&x| x.into()).collect();
+                    *grad_shape.last_mut().unwrap() = num_windows.into();
+                    grad_shape.push(pool_op.kernel.into());
+
+                    let graph_ptr: *mut Graph = graph;
+                    let grad_id = unsafe {
+                        (*graph_ptr).add_op(PoolLastDimBackward::new(
+                            pool_op.kernel,
+                            pool_op.stride,
+                            pool_op.dilation,
+                            input_last_dim,
+                        ))
+                    }
+                    .input(prev_grad.id, 0, ShapeTracker::new(grad_shape))
+                    .finish();
+
+                    let grad_tensor =
+                        GraphTensor::from_id(grad_id, inps[0].shape.contiguous(), unsafe {
+                            &mut *graph_ptr
+                        });
+                    add_grad(grad_tensor, inps[0], graph, &mut grads);
                 }
             } else if op == TypeId::of::<Contiguous>() {
                 if valid_set.contains(&inps[0].id) {
@@ -1374,7 +1411,6 @@ mod tests {
     // These tests catch the critical bug where stacking 2+ Conv2D layers causes NaN
 
     #[test]
-    #[ignore = "Known bug: autograd cannot compute gradients through pool_last_dim for input tensors. See IMPLEMENTATION_PLAN.md Section 6.4"]
     fn test_two_conv2d_gradient() {
         // CRITICAL TEST: Stack 2 Conv2D layers and verify gradients are valid
         // This is the minimal reproduction for the multi-layer CNN bug
@@ -1446,7 +1482,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Known bug: autograd cannot compute gradients through pool_last_dim for input tensors. See IMPLEMENTATION_PLAN.md Section 6.4"]
     fn test_three_conv2d_gradient() {
         // CRITICAL TEST: Stack 3 Conv2D layers - even more stress on gradient flow
         let mut cx = Graph::new();
@@ -1502,7 +1537,6 @@ mod tests {
     // These tests catch the critical bug where pooling layers cause immediate NaN
 
     #[test]
-    #[ignore = "Known bug: autograd cannot compute gradients through pool_last_dim for input tensors. See IMPLEMENTATION_PLAN.md Section 6.4"]
     fn test_simple_pool_gradient() {
         // Simple test: pool_last_dim -> sum (on pool dim) -> sum (to scalar)
         // This isolates the core pattern used in AvgPool2D
@@ -1547,7 +1581,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Known bug: autograd cannot compute gradients through pool_last_dim for input tensors. See IMPLEMENTATION_PLAN.md Section 6.4"]
     fn test_avgpool2d_gradient() {
         // CRITICAL TEST: AvgPool2D gradient computation
         use crate::nn::AvgPool2D;
@@ -1591,7 +1624,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Known bug: autograd cannot compute gradients through pool_last_dim for input tensors. See IMPLEMENTATION_PLAN.md Section 6.4"]
     fn test_maxpool2d_gradient() {
         // CRITICAL TEST: MaxPool2D gradient computation
         use crate::nn::MaxPool2D;
@@ -1642,7 +1674,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Known bug: autograd cannot compute gradients through pool_last_dim for input tensors. See IMPLEMENTATION_PLAN.md Section 6.4"]
     fn test_conv2d_plus_avgpool_gradient() {
         // CRITICAL TEST: Conv2D followed by AvgPool2D - the combination used in real CNNs
         use crate::nn::AvgPool2D;
@@ -1687,7 +1718,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Known bug: autograd cannot compute gradients through pool_last_dim for input tensors. See IMPLEMENTATION_PLAN.md Section 6.4"]
     fn test_conv2d_plus_maxpool_gradient() {
         // CRITICAL TEST: Conv2D followed by MaxPool2D
         use crate::nn::MaxPool2D;
@@ -1826,7 +1856,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Known bug: autograd cannot compute gradients through pool_last_dim for input tensors. See IMPLEMENTATION_PLAN.md Section 6.4"]
     fn test_gradient_magnitude_stability() {
         // Test that gradients don't explode or vanish over iterations
         let mut cx = Graph::new();

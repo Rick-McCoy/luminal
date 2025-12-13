@@ -7,7 +7,7 @@ use petgraph::visit::EdgeRef;
 use rustc_hash::FxHashMap;
 
 use luminal::{
-    op::{Function as LFunction, *},
+    op::{Function as LFunction, PoolLastDim, PoolLastDimBackward, *},
     prelude::*,
 };
 
@@ -677,6 +677,239 @@ impl<T: MetalFloat> Operator for MetalMaxReduce<T> {
     }
 }
 
+/// Metal implementation of PoolLastDim
+/// Pools elements along the last dimension into overlapping windows
+#[derive(Clone)]
+pub struct MetalPoolLastDim<T> {
+    pipeline: ComputePipelineState,
+    queue: CommandQueue,
+    device: Device,
+    kernel: usize,
+    stride: usize,
+    dilation: usize,
+    _phantom: PhantomData<T>,
+}
+crate::debug_type!(MetalPoolLastDim);
+
+impl<T: MetalFloat> MetalPoolLastDim<T> {
+    pub fn new(
+        input_shape: ShapeTracker,
+        kernel: usize,
+        stride: usize,
+        dilation: usize,
+        device: Device,
+        queue: CommandQueue,
+    ) -> Self {
+        let type_name = T::type_name();
+        let n_dims = input_shape.len();
+        let input_last_dim = input_shape.shape_usize()[n_dims - 1];
+        let full_kernel = kernel + (kernel - 1) * (dilation - 1);
+        let num_windows = (input_last_dim - full_kernel) / stride + 1;
+        let batch_size: usize = input_shape
+            .shape_usize()
+            .iter()
+            .take(n_dims - 1)
+            .product::<usize>()
+            .max(1);
+
+        let code = format!(
+            "
+#include <metal_stdlib>
+using namespace metal;
+kernel void mkernel(
+    device {type_name} *input [[buffer(0)]],
+    device {type_name} *output [[buffer(1)]],
+    uint idx [[thread_position_in_grid]]
+) {{
+    const uint kernel_size = {kernel};
+    const uint stride_size = {stride};
+    const uint dilation_size = {dilation};
+    const uint num_windows = {num_windows};
+    const uint input_last_dim = {input_last_dim};
+    const uint batch_size = {batch_size};
+    
+    uint total_out = batch_size * num_windows * kernel_size;
+    if (idx >= total_out) return;
+    
+    // Decompose output index
+    uint k = idx % kernel_size;
+    uint w = (idx / kernel_size) % num_windows;
+    uint b = idx / (kernel_size * num_windows);
+    
+    // Compute input index
+    uint input_pos = w * stride_size + k * dilation_size;
+    uint input_idx = b * input_last_dim + input_pos;
+    
+    output[idx] = input[input_idx];
+}}
+"
+        );
+        Self {
+            pipeline: compile_function("mkernel", &code, &device),
+            queue,
+            device,
+            kernel,
+            stride,
+            dilation,
+            _phantom: Default::default(),
+        }
+    }
+}
+
+impl<T: MetalFloat> Operator for MetalPoolLastDim<T> {
+    fn process(&mut self, tensors: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
+        autoreleasepool(|| {
+            let input = get_buffer_from_tensor(&tensors[0].0);
+            let input_shape = tensors[0].1.shape_usize();
+            let n_dims = input_shape.len();
+            let input_last_dim = input_shape[n_dims - 1];
+            let full_kernel = self.kernel + (self.kernel - 1) * (self.dilation - 1);
+            let num_windows = (input_last_dim - full_kernel) / self.stride + 1;
+            let batch_size: usize = input_shape
+                .iter()
+                .take(n_dims - 1)
+                .product::<usize>()
+                .max(1);
+            let out_size = batch_size * num_windows * self.kernel;
+
+            let command_buffer = self.queue.new_command_buffer();
+            let out = self.device.new_buffer(
+                (out_size * std::mem::size_of::<T>()) as u64,
+                MTLResourceOptions::StorageModeShared,
+            );
+
+            let encoder = command_buffer
+                .compute_command_encoder_with_descriptor(ComputePassDescriptor::new());
+            encoder.set_compute_pipeline_state(&self.pipeline);
+            encoder.set_buffer(0, Some(input), 0);
+            encoder.set_buffer(1, Some(&out), 0);
+            encoder.dispatch_1d(out_size);
+            encoder.end_encoding();
+
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+
+            vec![Tensor::new(MetalBuffer(out))]
+        })
+    }
+}
+
+/// Metal implementation of PoolLastDimBackward
+/// Computes the gradient (scatter-add) for PoolLastDim
+#[derive(Clone)]
+pub struct MetalPoolLastDimBackward<T> {
+    pipeline: ComputePipelineState,
+    queue: CommandQueue,
+    device: Device,
+    /// Kernel size - stored for runtime shape calculation
+    kernel: usize,
+    /// Original input last dimension size - stored for runtime shape calculation
+    input_last_dim: usize,
+    _phantom: PhantomData<T>,
+}
+crate::debug_type!(MetalPoolLastDimBackward);
+
+impl<T: MetalFloat> MetalPoolLastDimBackward<T> {
+    pub fn new(
+        grad_shape: ShapeTracker,
+        kernel: usize,
+        stride: usize,
+        dilation: usize,
+        input_last_dim: usize,
+        device: Device,
+        queue: CommandQueue,
+    ) -> Self {
+        let type_name = T::type_name();
+        let shape = grad_shape.shape_usize();
+        let n_dims = shape.len();
+        let num_windows = shape[n_dims - 2];
+        let batch_size: usize = shape.iter().take(n_dims - 2).product::<usize>().max(1);
+
+        // For backward pass, we need atomic add since multiple gradient elements
+        // may contribute to the same input position
+        let code = format!(
+            "
+#include <metal_stdlib>
+using namespace metal;
+kernel void mkernel(
+    device {type_name} *grad_out [[buffer(0)]],
+    device atomic<float> *grad_in [[buffer(1)]],
+    uint idx [[thread_position_in_grid]]
+) {{
+    const uint kernel_size = {kernel};
+    const uint stride_size = {stride};
+    const uint dilation_size = {dilation};
+    const uint num_windows = {num_windows};
+    const uint input_last_dim = {input_last_dim};
+    const uint batch_size = {batch_size};
+    
+    uint total_grad_out = batch_size * num_windows * kernel_size;
+    if (idx >= total_grad_out) return;
+    
+    // Decompose gradient output index
+    uint k = idx % kernel_size;
+    uint w = (idx / kernel_size) % num_windows;
+    uint b = idx / (kernel_size * num_windows);
+    
+    // Compute corresponding input position
+    uint input_pos = w * stride_size + k * dilation_size;
+    if (input_pos < input_last_dim) {{
+        uint grad_in_idx = b * input_last_dim + input_pos;
+        atomic_fetch_add_explicit(&grad_in[grad_in_idx], grad_out[idx], memory_order_relaxed);
+    }}
+}}
+"
+        );
+        Self {
+            pipeline: compile_function("mkernel", &code, &device),
+            queue,
+            device,
+            kernel,
+            input_last_dim,
+            _phantom: Default::default(),
+        }
+    }
+}
+
+impl<T: MetalFloat> Operator for MetalPoolLastDimBackward<T> {
+    fn process(&mut self, tensors: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
+        autoreleasepool(|| {
+            let grad_out = get_buffer_from_tensor(&tensors[0].0);
+            let shape = tensors[0].1.shape_usize();
+            let n_dims = shape.len();
+            let num_windows = shape[n_dims - 2];
+            let batch_size: usize = shape.iter().take(n_dims - 2).product::<usize>().max(1);
+            let grad_out_size = batch_size * num_windows * self.kernel;
+            let grad_in_size = batch_size * self.input_last_dim;
+
+            let command_buffer = self.queue.new_command_buffer();
+
+            // Create zeroed output buffer
+            let out = self.device.new_buffer(
+                (grad_in_size * std::mem::size_of::<T>()) as u64,
+                MTLResourceOptions::StorageModeShared,
+            );
+            // Zero the buffer
+            unsafe {
+                std::ptr::write_bytes(out.contents() as *mut T, 0, grad_in_size);
+            }
+
+            let encoder = command_buffer
+                .compute_command_encoder_with_descriptor(ComputePassDescriptor::new());
+            encoder.set_compute_pipeline_state(&self.pipeline);
+            encoder.set_buffer(0, Some(grad_out), 0);
+            encoder.set_buffer(1, Some(&out), 0);
+            encoder.dispatch_1d(grad_out_size);
+            encoder.end_encoding();
+
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+
+            vec![Tensor::new(MetalBuffer(out))]
+        })
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct PrimitiveCompiler<T>(PhantomData<T>);
 
@@ -891,6 +1124,25 @@ impl<T: MetalFloat + 'static> Compiler for PrimitiveCompiler<T> {
                     dev.clone(),
                     queue.clone(),
                     &graph.dyn_map,
+                ));
+            } else if let Some(pool_op) = op_ref.as_any().downcast_ref::<PoolLastDim>() {
+                *op_ref = Box::new(MetalPoolLastDim::<T>::new(
+                    src_shapes[0],
+                    pool_op.kernel,
+                    pool_op.stride,
+                    pool_op.dilation,
+                    dev.clone(),
+                    queue.clone(),
+                ));
+            } else if let Some(pool_bwd) = op_ref.as_any().downcast_ref::<PoolLastDimBackward>() {
+                *op_ref = Box::new(MetalPoolLastDimBackward::<T>::new(
+                    src_shapes[0],
+                    pool_bwd.kernel,
+                    pool_bwd.stride,
+                    pool_bwd.dilation,
+                    pool_bwd.input_last_dim,
+                    dev.clone(),
+                    queue.clone(),
                 ));
             }
         }

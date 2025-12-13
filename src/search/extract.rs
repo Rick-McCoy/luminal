@@ -395,7 +395,11 @@ pub fn search(
             }
         }
     }
-    let (ref_kernels, ref_gmem_map) = codegen(ref_graph.clone(), arch.clone(), dyn_vars).unwrap();
+    let Some((ref_kernels, ref_gmem_map)) = codegen(ref_graph.clone(), arch.clone(), dyn_vars)
+    else {
+        // Codegen failed on reference graph, can't proceed with search
+        return None;
+    };
     #[cfg(feature = "metal")]
     let device = MTLCreateSystemDefaultDevice().unwrap();
     #[cfg(feature = "cuda")]
@@ -412,13 +416,15 @@ pub fn search(
             )
         })
         .collect_vec();
-    let (_, ref_outputs) = cost(
+    let Some((_, ref_outputs)) = cost(
         &ref_kernels,
         &map_inputs_into_kernel_graph(&inputs, &ref_graph),
         &ref_gmem_map,
         dyn_vars,
-    )
-    .unwrap();
+    ) else {
+        // Cost calculation failed on reference graph, can't proceed with search
+        return None;
+    };
 
     // Build search space and get trajectories
     let egraph = build_search_space(graph, steps);
@@ -889,7 +895,9 @@ pub fn extraction_to_graph(
     );
     for n in g.node_indices() {
         if g.neighbors_undirected(n).next().is_none() {
-            display_graph(&g);
+            if option_env!("DEBUG_GRAPHVIZ").is_some() {
+                display_graph(&g);
+            }
             panic!("free-standing node found in graph");
         }
     }

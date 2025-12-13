@@ -13,7 +13,7 @@ use std::{
 use cudarc::driver::{CudaContext, CudaFunction, LaunchConfig, PushKernelArg};
 
 use luminal::{
-    op::{Function as LFunction, *},
+    op::{Function as LFunction, PoolLastDim, PoolLastDimBackward, *},
     prelude::{petgraph::visit::EdgeRef, *},
 };
 
@@ -674,6 +674,217 @@ impl<T: CudaFloat> Operator for CudaMaxReduce<T> {
     }
 }
 
+/// CUDA implementation of PoolLastDim
+/// Pools elements along the last dimension into overlapping windows
+#[derive(Clone)]
+pub struct CudaPoolLastDim<T> {
+    function: CudaFunction,
+    device: Arc<CudaContext>,
+    kernel: usize,
+    stride: usize,
+    dilation: usize,
+    _phantom: PhantomData<T>,
+}
+crate::debug_type!(CudaPoolLastDim);
+
+impl<T: CudaFloat> CudaPoolLastDim<T> {
+    pub fn new(
+        input_shape: ShapeTracker,
+        kernel: usize,
+        stride: usize,
+        dilation: usize,
+        device: Arc<CudaContext>,
+    ) -> Self {
+        let type_name = T::type_name();
+        let n_dims = input_shape.len();
+        let input_last_dim = input_shape.shape_usize()[n_dims - 1];
+        let full_kernel = kernel + (kernel - 1) * (dilation - 1);
+        let num_windows = (input_last_dim - full_kernel) / stride + 1;
+        let batch_size: usize = input_shape
+            .shape_usize()
+            .iter()
+            .take(n_dims - 1)
+            .product::<usize>()
+            .max(1);
+
+        let code = format!(
+            "
+#include \"cuda_fp16.h\"
+extern \"C\" __global__ void kernel(
+    {type_name} *output,
+    const {type_name} *input,
+    int total_out
+) {{
+    const int kernel_size = {kernel};
+    const int stride_size = {stride};
+    const int dilation_size = {dilation};
+    const int num_windows = {num_windows};
+    const int input_last_dim = {input_last_dim};
+    const int batch_size = {batch_size};
+    
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= total_out) return;
+    
+    // Decompose output index
+    int k = idx % kernel_size;
+    int w = (idx / kernel_size) % num_windows;
+    int b = idx / (kernel_size * num_windows);
+    
+    // Compute input index
+    int input_pos = w * stride_size + k * dilation_size;
+    int input_idx = b * input_last_dim + input_pos;
+    
+    output[idx] = input[input_idx];
+}}
+"
+        );
+        Self {
+            function: compile_and_load_kernel(code, &device),
+            device,
+            kernel,
+            stride,
+            dilation,
+            _phantom: Default::default(),
+        }
+    }
+}
+
+impl<T: CudaFloat> Operator for CudaPoolLastDim<T> {
+    fn process(&mut self, tensors: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
+        let input = get_buffer_from_tensor::<T>(&tensors[0].0);
+        let input_shape = tensors[0].1.shape_usize();
+        let n_dims = input_shape.len();
+        let input_last_dim = input_shape[n_dims - 1];
+        let full_kernel = self.kernel + (self.kernel - 1) * (self.dilation - 1);
+        let num_windows = (input_last_dim - full_kernel) / self.stride + 1;
+        let batch_size: usize = input_shape
+            .iter()
+            .take(n_dims - 1)
+            .product::<usize>()
+            .max(1);
+        let out_size = batch_size * num_windows * self.kernel;
+
+        let stream = self.device.default_stream();
+        let mut out = unsafe { stream.alloc::<T>(out_size).unwrap() };
+
+        let mut launch_args = stream.launch_builder(&self.function);
+        launch_args.arg(&mut out);
+        launch_args.arg(input);
+        launch_args.arg(&out_size);
+        unsafe {
+            launch_args
+                .launch(LaunchConfig::for_num_elems(out_size as u32))
+                .unwrap();
+        }
+
+        vec![Tensor::new(CudaData(out))]
+    }
+}
+
+/// CUDA implementation of PoolLastDimBackward
+/// Computes the gradient (scatter-add) for PoolLastDim
+#[derive(Clone)]
+#[allow(dead_code)]
+pub struct CudaPoolLastDimBackward<T> {
+    function: CudaFunction,
+    device: Arc<CudaContext>,
+    kernel: usize,
+    stride: usize,
+    dilation: usize,
+    input_last_dim: usize,
+    _phantom: PhantomData<T>,
+}
+crate::debug_type!(CudaPoolLastDimBackward);
+
+impl<T: CudaFloat> CudaPoolLastDimBackward<T> {
+    pub fn new(
+        grad_shape: ShapeTracker,
+        kernel: usize,
+        stride: usize,
+        dilation: usize,
+        input_last_dim: usize,
+        device: Arc<CudaContext>,
+    ) -> Self {
+        let type_name = T::type_name();
+        let shape = grad_shape.shape_usize();
+        let n_dims = shape.len();
+        let num_windows = shape[n_dims - 2];
+        let batch_size: usize = shape.iter().take(n_dims - 2).product::<usize>().max(1);
+
+        // For backward pass, we need atomic add since multiple gradient elements
+        // may contribute to the same input position
+        let code = format!(
+            "
+#include \"cuda_fp16.h\"
+extern \"C\" __global__ void kernel(
+    float *grad_in,
+    const {type_name} *grad_out,
+    int total_grad_out
+) {{
+    const int kernel_size = {kernel};
+    const int stride_size = {stride};
+    const int dilation_size = {dilation};
+    const int num_windows = {num_windows};
+    const int input_last_dim = {input_last_dim};
+    const int batch_size = {batch_size};
+    
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= total_grad_out) return;
+    
+    // Decompose gradient output index
+    int k = idx % kernel_size;
+    int w = (idx / kernel_size) % num_windows;
+    int b = idx / (kernel_size * num_windows);
+    
+    // Compute corresponding input position
+    int input_pos = w * stride_size + k * dilation_size;
+    if (input_pos < input_last_dim) {{
+        int grad_in_idx = b * input_last_dim + input_pos;
+        atomicAdd(&grad_in[grad_in_idx], (float)grad_out[idx]);
+    }}
+}}
+"
+        );
+        Self {
+            function: compile_and_load_kernel(code, &device),
+            device,
+            kernel,
+            stride,
+            dilation,
+            input_last_dim,
+            _phantom: Default::default(),
+        }
+    }
+}
+
+impl<T: CudaFloat> Operator for CudaPoolLastDimBackward<T> {
+    fn process(&mut self, tensors: Vec<(InputTensor, ShapeTracker)>) -> Vec<Tensor> {
+        let grad_out = get_buffer_from_tensor::<T>(&tensors[0].0);
+        let shape = tensors[0].1.shape_usize();
+        let n_dims = shape.len();
+        let num_windows = shape[n_dims - 2];
+        let batch_size: usize = shape.iter().take(n_dims - 2).product::<usize>().max(1);
+        let grad_out_size = batch_size * num_windows * self.kernel;
+        let grad_in_size = batch_size * self.input_last_dim;
+
+        let stream = self.device.default_stream();
+        // Create zeroed output buffer
+        let mut out = stream.alloc_zeros::<f32>(grad_in_size).unwrap();
+
+        let mut launch_args = stream.launch_builder(&self.function);
+        launch_args.arg(&mut out);
+        launch_args.arg(grad_out);
+        launch_args.arg(&grad_out_size);
+        unsafe {
+            launch_args
+                .launch(LaunchConfig::for_num_elems(grad_out_size as u32))
+                .unwrap();
+        }
+
+        vec![Tensor::new(CudaData(out))]
+    }
+}
+
 /// Convert all primitive ops to cuda primitive ops, and insert copy to and from device ops
 #[derive(Debug, Default)]
 pub struct PrimitiveCompiler<T>(PhantomData<T>);
@@ -843,6 +1054,23 @@ impl<T: CudaFloat> Compiler for PrimitiveCompiler<T> {
                     shapes[0],
                     dev.clone(),
                     &graph.dyn_map,
+                ));
+            } else if let Some(pool_op) = op_ref.as_any().downcast_ref::<PoolLastDim>() {
+                *op_ref = Box::new(CudaPoolLastDim::<T>::new(
+                    shapes[0],
+                    pool_op.kernel,
+                    pool_op.stride,
+                    pool_op.dilation,
+                    dev.clone(),
+                ));
+            } else if let Some(pool_bwd) = op_ref.as_any().downcast_ref::<PoolLastDimBackward>() {
+                *op_ref = Box::new(CudaPoolLastDimBackward::<T>::new(
+                    shapes[0],
+                    pool_bwd.kernel,
+                    pool_bwd.stride,
+                    pool_bwd.dilation,
+                    pool_bwd.input_last_dim,
+                    dev.clone(),
                 ));
             }
         }

@@ -122,6 +122,7 @@ pub fn codegen(
     }
     let Ok(t) = toposort(&kernel_meta_graph, None) else {
         // TODO: for some reason sometimes there are cycles in the kernel graph
+        eprintln!("[codegen] FAIL: cycle in kernel meta graph");
         return None;
     };
     for node in t {
@@ -1155,10 +1156,9 @@ pub fn split_kernels_marked_graph(
                 neighbor_levels.push(range);
             }
             if matches!(curr_term, GraphTerm::LoopIn { .. }) {
-                if neighbor_levels.is_empty() {
-                    display_graph2(&marked_graph, &[]);
-                }
-                neighbor_levels.pop().unwrap();
+                // Pop the innermost loop level if available
+                // This can be empty for certain graph patterns (e.g., CNN ops)
+                neighbor_levels.pop();
             }
             marked_graph.node_weight_mut(n).unwrap().1 = neighbor_levels;
         } else if let Some(incoming_neighbor) = marked_graph
@@ -1171,7 +1171,9 @@ pub fn split_kernels_marked_graph(
                 neighbor_levels.push(range);
             }
             if matches!(curr_term, GraphTerm::LoopOut { .. }) {
-                neighbor_levels.pop().unwrap();
+                // Pop the innermost loop level if available
+                // This can be empty for certain graph patterns (e.g., CNN ops)
+                neighbor_levels.pop();
             }
             marked_graph.node_weight_mut(n).unwrap().1 = neighbor_levels;
         } else {

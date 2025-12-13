@@ -118,7 +118,9 @@ pub fn validate_graph(graph: &StableGraph<(GraphTerm, usize), (), Directed>) {
                 let (new_term, new_level) = graph.node_weight(new_node).unwrap();
                 if !matches!(new_term, GraphTerm::LoopOut { .. }) {
                     if *new_level != *curr_level + 1 {
-                        display_graph(graph);
+                        if option_env!("DEBUG_GRAPHVIZ").is_some() {
+                            display_graph(graph);
+                        }
                         panic!("incorrect levels");
                     }
                 }
@@ -129,7 +131,9 @@ pub fn validate_graph(graph: &StableGraph<(GraphTerm, usize), (), Directed>) {
                 let (new_term, new_level) = graph.node_weight(new_node).unwrap();
                 if !matches!(new_term, GraphTerm::LoopIn { .. }) {
                     if *new_level != *curr_level + 1 {
-                        display_graph(graph);
+                        if option_env!("DEBUG_GRAPHVIZ").is_some() {
+                            display_graph(graph);
+                        }
                         panic!("incorrect levels");
                     }
                 }
@@ -142,7 +146,9 @@ pub fn validate_graph(graph: &StableGraph<(GraphTerm, usize), (), Directed>) {
                     GraphTerm::LoopIn { .. } | GraphTerm::LoopOut { .. }
                 ) {
                     if *new_level != *curr_level {
-                        display_graph(graph);
+                        if option_env!("DEBUG_GRAPHVIZ").is_some() {
+                            display_graph(graph);
+                        }
                         panic!("incorrect levels {curr_term:?} -> {new_term:?}");
                     }
                 }
@@ -155,7 +161,9 @@ pub fn validate_graph(graph: &StableGraph<(GraphTerm, usize), (), Directed>) {
                 && !matches!(graph.node_weight(node).unwrap().0, GraphTerm::SMEM)
             {
                 if *curr_level != 0 {
-                    display_graph(graph);
+                    if option_env!("DEBUG_GRAPHVIZ").is_some() {
+                        display_graph(graph);
+                    }
                     panic!("Inputs must have level 0, found {curr_level}");
                 }
             }

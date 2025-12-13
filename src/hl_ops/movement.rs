@@ -119,43 +119,86 @@ impl GraphTensor {
     }
 
     /// Pool elements along the last dimension, pools are exposed as a new dimension
+    ///
+    /// This operation transforms input of shape `(..., N)` to output of shape
+    /// `(..., num_windows, kernel_size)`. Each window covers `kernel` elements
+    /// from the input, with windows separated by `stride` positions.
+    ///
+    /// The `dilation` parameter adds spacing between kernel elements.
+    ///
+    /// Note: Gradients only work correctly when kernel, stride, and input dimension
+    /// are concrete (non-dynamic) values.
     pub fn pool_last_dim(
         mut self,
         kernel: impl Into<Expression>,
         stride: impl Into<Expression>,
         dilation: usize,
     ) -> GraphTensor {
-        let (kernel, stride) = (kernel.into(), stride.into());
+        let (kernel_expr, stride_expr) = (kernel.into(), stride.into());
+        let dim_size = self.dims().last().unwrap().simplify();
+
+        // Use primitive operator when all values are concrete (supports gradients)
+        if let (Some(k), Some(s), Some(d)) = (
+            kernel_expr.to_usize(),
+            stride_expr.to_usize(),
+            dim_size.to_usize(),
+        ) {
+            self = self.contiguous();
+            let n_dims = self.shape.len();
+            let full_kernel = k + (k - 1) * (dilation - 1);
+            let num_windows = (d - full_kernel) / s + 1;
+
+            self.id = self
+                .graph()
+                .add_op(op::PoolLastDim::new(k, s, dilation))
+                .input(self.id, 0, self.shape)
+                .finish();
+
+            self.shape.dims[self.shape.indexes[n_dims - 1]] = num_windows.into();
+            self.shape.add_dim(n_dims, k);
+            self.shape.fake[self.shape.indexes[n_dims]] = false;
+            self.shape = self.shape.contiguous();
+            self
+        } else {
+            // Dynamic shapes: use shape tracker (gradients won't work)
+            self.pool_last_dim_dynamic(kernel_expr, stride_expr, dilation)
+        }
+    }
+
+    /// Shape tracker-based pooling for dynamic shapes. Gradients are not supported.
+    fn pool_last_dim_dynamic(
+        mut self,
+        kernel: Expression,
+        stride: Expression,
+        dilation: usize,
+    ) -> GraphTensor {
         let n_dims = self.shape.len();
         let full_kernel = kernel + (kernel - 1) * (dilation - 1);
         let dim_size = self.dims().pop().unwrap().simplify();
-        let number_of_windows = (((dim_size - full_kernel) / stride) + 1).simplify();
-        // Expand new dimension
-        self.shape.expand_dim(n_dims - 1, number_of_windows);
+        let num_windows = (((dim_size - full_kernel) / stride) + 1).simplify();
+
+        self.shape.expand_dim(n_dims - 1, num_windows);
         self = self.contiguous();
+
         if n_dims > 1 {
-            // View as single dimension of matrix with wider width
-            let mat_size = (dim_size + stride) * number_of_windows;
-            let actual_size = (dim_size * number_of_windows).simplify();
-            // Reshape into single dimension to pad
+            let mat_size = (dim_size + stride) * num_windows;
+            let actual_size = (dim_size * num_windows).simplify();
             self.shape.remove_dim(n_dims);
             self.shape.dims[self.shape.indexes[n_dims - 1]] = actual_size;
             self.shape.padding[self.shape.indexes[n_dims - 1]].1 =
                 (mat_size - actual_size).simplify();
             self = self.contiguous();
-            // Reshape back (mats should be full now)
             self.shape.add_dim(n_dims, dim_size + stride);
-            self.shape.dims[self.shape.indexes[n_dims - 1]] = number_of_windows;
+            self.shape.dims[self.shape.indexes[n_dims - 1]] = num_windows;
         } else {
             self.shape.dims[self.shape.indexes[n_dims]] = dim_size + stride;
         }
-        // Slice down to kernel size
+
         self.shape.mask[self.shape.indexes[n_dims]].1 = full_kernel.simplify();
-        self.shape.mask[self.shape.indexes[n_dims - 1]].1 = number_of_windows;
+        self.shape.mask[self.shape.indexes[n_dims - 1]].1 = num_windows;
         self = self.contiguous();
 
         if dilation > 1 {
-            // Remove dilations
             self.excise(1, dilation - 1)
         } else {
             self

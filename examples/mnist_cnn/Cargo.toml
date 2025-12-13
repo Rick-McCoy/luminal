@@ -2,13 +2,13 @@
 name = "mnist_cnn"
 version = "0.2.0"
 edition = "2021"
-description = "Train an MLP on MNIST using luminal with search-based optimization"
+description = "Train a CNN on MNIST using luminal with optional search-based optimization"
 
 [features]
 default = []
 metal = ["dep:luminal_metal", "luminal/metal"]
 cuda = ["dep:luminal_cuda", "luminal/cuda"]
-search = ["luminal/search"]
+search = ["luminal/search", "luminal_metal?/search", "luminal_cuda?/search"]
 
 [dependencies]
 luminal = { path = "../.." }

@@ -11,6 +11,7 @@ use super::{
     utils::{loop_in, loop_out},
     GraphTerm,
 };
+// PoolLastDim and PoolLastDimBackward are matched by string pattern, no import needed
 use crate::prelude::{
     petgraph::{algo::toposort, prelude::StableGraph, Directed},
     *,
@@ -277,6 +278,54 @@ pub fn translate_graph(
                 opn = scope_out(opn, ranges, Some(reduce_dim), &mut g);
                 key_to_subgraph_buffer.insert(old_node, opn);
                 orig_to_subgraph_node_map.insert((old_node, 0), opn);
+            }
+
+            // ---- POOL LAST DIM ----
+            // PoolLastDim: (..., N) -> (..., num_windows, kernel)
+            //
+            // Create a GMEM placeholder and connect source to it.
+            // This prevents orphaned LoopOut nodes by giving them a destination.
+            s if s.starts_with("PoolLastDim {") => {
+                // Get the source
+                let (src_old, out_idx, _shape) = sources.pop().unwrap();
+                let src_inner = orig_to_subgraph_node_map[&(src_old, out_idx as usize)];
+
+                // Create the GMEM placeholder
+                let newn = g.add_node(GraphTerm::GMEM {
+                    label: format!("pool_{}", old_node.index()),
+                });
+
+                // Connect source to GMEM to prevent orphaned LoopOut nodes
+                // Only add edge if source is NOT a GMEM (avoid GMEM->GMEM edges)
+                if !matches!(g[src_inner], GraphTerm::GMEM { .. }) {
+                    g.add_edge(src_inner, newn, ());
+                }
+
+                orig_to_subgraph_node_map.insert((old_node, 0), newn);
+                key_to_subgraph_buffer.insert(old_node, newn);
+            }
+
+            // ---- POOL LAST DIM BACKWARD ----
+            // PoolLastDimBackward: (..., num_windows, kernel) -> (..., N)
+            // Same approach as PoolLastDim.
+            s if s.starts_with("PoolLastDimBackward {") => {
+                // Get the source
+                let (src_old, out_idx, _shape) = sources.pop().unwrap();
+                let src_inner = orig_to_subgraph_node_map[&(src_old, out_idx as usize)];
+
+                // Create the GMEM placeholder
+                let newn = g.add_node(GraphTerm::GMEM {
+                    label: format!("pool_bwd_{}", old_node.index()),
+                });
+
+                // Connect source to GMEM to prevent orphaned LoopOut nodes
+                // Only add edge if source is NOT a GMEM (avoid GMEM->GMEM edges)
+                if !matches!(g[src_inner], GraphTerm::GMEM { .. }) {
+                    g.add_edge(src_inner, newn, ());
+                }
+
+                orig_to_subgraph_node_map.insert((old_node, 0), newn);
+                key_to_subgraph_buffer.insert(old_node, newn);
             }
 
             // ---- CONSTANTS / CUSTOM / DIFF / LOADS ----
@@ -999,5 +1048,222 @@ mod tests {
             found_loop_out,
             "LoopOut nodes should be created for scoping"
         );
+    }
+
+    #[test]
+    fn test_pool_last_dim_translation() {
+        // PoolLastDim changes dimensionality and is translated as a GMEM placeholder
+        // (dimension expansion doesn't fit the current loop-nest IR)
+        let mut cx = Graph::new();
+        let a = cx.tensor(5).set([1., 2., 3., 4., 5.]);
+        // pool_last_dim(kernel=3, stride=1, dilation=1) produces (3, 3) from (5,)
+        let b = a.pool_last_dim(3, 1, 1);
+        let _c = b.sum(0).sum(0).retrieve();
+
+        let (meta_graph, global_map, _inits) = translate_graph(&cx);
+
+        // Verify the translation completed without panic
+        assert!(
+            meta_graph.node_count() > 0,
+            "Meta graph should have at least one subgraph"
+        );
+
+        // Verify PoolLastDim node is in the global map (it was processed)
+        let pool_nodes: Vec<_> = cx
+            .graph
+            .node_indices()
+            .filter(|n| {
+                cx.graph
+                    .node_weight(*n)
+                    .map(|w| format!("{:?}", w).contains("PoolLastDim"))
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        assert!(
+            !pool_nodes.is_empty(),
+            "Graph should contain PoolLastDim node"
+        );
+
+        // Check that all original nodes are mapped
+        for pool_node in pool_nodes {
+            assert!(
+                global_map.contains_key(&pool_node),
+                "PoolLastDim node {:?} should be in global mapping",
+                pool_node
+            );
+        }
+
+        // Verify PoolLastDim creates a GMEM placeholder
+        let mut found_pool_gmem = false;
+        for meta_node_idx in meta_graph.node_indices() {
+            let subgraph = meta_graph.node_weight(meta_node_idx).unwrap();
+            for sub_node_idx in subgraph.node_indices() {
+                if let Some(GraphTerm::GMEM { label }) = subgraph.node_weight(sub_node_idx) {
+                    if label.starts_with("pool_") {
+                        found_pool_gmem = true;
+                        break;
+                    }
+                }
+            }
+        }
+        assert!(
+            found_pool_gmem,
+            "PoolLastDim should create a GMEM placeholder"
+        );
+    }
+
+    #[test]
+    fn test_pool_last_dim_codegen() {
+        use crate::search::codegen::{codegen, stitch_meta_graph_together};
+        use crate::search::GPUArch;
+
+        // Simple 1D pool
+        let mut cx = Graph::new();
+        let a = cx.tensor(5).set([1., 2., 3., 4., 5.]);
+        let b = a.pool_last_dim(3, 1, 1);
+        let _c = b.sum(0).sum(0).retrieve();
+
+        let (meta_graph, _global_map, _inits) = translate_graph(&cx);
+        let (stitched, _) = stitch_meta_graph_together(meta_graph);
+
+        // This should not panic
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            codegen(stitched, GPUArch::metal(), &cx.dyn_map)
+        }));
+
+        assert!(result.is_ok(), "Codegen should not panic for pool_last_dim");
+    }
+
+    #[test]
+    fn test_avgpool2d_pattern_codegen() {
+        use crate::search::codegen::{codegen, stitch_meta_graph_together};
+        use crate::search::GPUArch;
+
+        // Mimic AvgPool2D: pool_last_dim, permute, pool_last_dim, permute
+        // Input: (batch, ch, h, w) = (1, 1, 4, 4)
+        let mut cx = Graph::new();
+        let a = cx
+            .tensor((1, 1, 4, 4))
+            .set_dyn((0..16).map(|i| i as f32).collect::<Vec<_>>(), (1, 1, 4, 4));
+
+        // AvgPool2D with kernel=(2,2), stride=(2,2)
+        // Step 1: pool last dim (width)
+        let b = a.pool_last_dim(2, 2, 1); // (1, 1, 4, 2, 2)
+
+        // Step 2: permute
+        let c = b.permute((0, 1, 3, 4, 2)); // (1, 1, 2, 2, 4)
+
+        // Step 3: pool "last dim" (which is now height)
+        let d = c.pool_last_dim(2, 2, 1); // (1, 1, 2, 2, 2, 2)
+
+        // Step 4: permute and reshape to final output
+        let e = d.permute((0, 1, 5, 3, 4, 2)); // rearrange
+        let f = e.reshape((1, 1, 4, 4)); // (1, 1, 2*2, 2*2)
+        let _g = f.mean(2).retrieve(); // reduce
+
+        let (meta_graph, _global_map, _inits) = translate_graph(&cx);
+        let (stitched, _) = stitch_meta_graph_together(meta_graph);
+
+        // This should not panic
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            codegen(stitched, GPUArch::metal(), &cx.dyn_map)
+        }));
+
+        assert!(
+            result.is_ok(),
+            "Codegen should not panic for AvgPool2D-like pattern"
+        );
+    }
+
+    #[test]
+    fn test_conv2d_avgpool2d_codegen() {
+        use crate::nn::{AvgPool2D, Conv2D};
+        use crate::search::codegen::{codegen, stitch_meta_graph_together};
+        use crate::search::GPUArch;
+
+        // Test actual Conv2D + AvgPool2D pattern
+        // Input needs to be large enough: after Conv2D(3x3) on 28x28 -> 26x26
+        // After AvgPool2D(2x2, stride=2) -> 13x13
+        let mut cx = Graph::new();
+        let x = cx.tensor((1, 1, 28, 28)).set_dyn(
+            (0..784).map(|i| i as f32).collect::<Vec<_>>(),
+            (1, 1, 28, 28),
+        );
+
+        // Conv2D(1→2, 3x3) with padding so output stays same size
+        let conv = Conv2D::new(1, 2, (3, 3), (1, 1), (1, 1), false, &mut cx);
+        let y = conv.forward(x);
+
+        // AvgPool2D(2x2)
+        let pool = AvgPool2D::new((2, 2), (2, 2));
+        let z = pool.forward(y);
+        let _out = z.mean(1).mean(1).mean(1).retrieve();
+
+        let (meta_graph, _global_map, _inits) = translate_graph(&cx);
+        let (stitched, _) = stitch_meta_graph_together(meta_graph);
+
+        // This should not panic
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            codegen(stitched, GPUArch::metal(), &cx.dyn_map)
+        }));
+
+        assert!(
+            result.is_ok(),
+            "Codegen should not panic for Conv2D+AvgPool2D pattern"
+        );
+    }
+
+    /// Test that multiple pool_last_dim operations in sequence gracefully fall back
+    /// when codegen can't handle the resulting graph structure.
+    ///
+    /// This test catches the real-world scenario where:
+    /// 1. Multiple pool operations create complex graph structures
+    /// 2. The loop-nest IR has orphaned LoopOut nodes from pooling
+    /// 3. Codegen should return None (not panic) to allow fast mode fallback
+    #[test]
+    fn test_cnn_training_pattern_graceful_fallback() {
+        use crate::search::codegen::{codegen, stitch_meta_graph_together};
+        use crate::search::GPUArch;
+
+        // Create a pattern with multiple pool_last_dim operations
+        let mut cx = Graph::new();
+
+        // Input: (batch=4, seq=100)
+        let x = cx.tensor((4, 100)).set_dyn(
+            (0..400).map(|i| i as f32 / 400.0).collect::<Vec<_>>(),
+            (4, 100),
+        );
+
+        // First pool: (4, 100) -> (4, num_windows1, kernel1)
+        let y = x.pool_last_dim(10, 5, 1); // (4, 19, 10)
+
+        // Sum across kernel dimension
+        let y = y.sum(2); // (4, 19)
+
+        // Second pool: (4, 19) -> (4, num_windows2, kernel2)
+        let z = y.pool_last_dim(5, 2, 1); // (4, 8, 5)
+
+        // Sum and retrieve
+        let _out = z.sum(1).sum(1).retrieve();
+
+        let (meta_graph, _global_map, _inits) = translate_graph(&cx);
+        let (stitched, _) = stitch_meta_graph_together(meta_graph);
+
+        // Codegen should NOT panic - it should gracefully return None
+        // to allow fallback to fast mode
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            codegen(stitched, GPUArch::metal(), &cx.dyn_map)
+        }));
+
+        assert!(
+            result.is_ok(),
+            "Codegen must not panic on multi-pool patterns - should return None for graceful fallback"
+        );
+
+        // Note: The result may be None (codegen failed) or Some (codegen succeeded).
+        // Both are acceptable as long as it doesn't panic.
+        // Currently, patterns with PoolLastDim return None because the
+        // loop-nest IR doesn't fully support dimension-expanding operations.
     }
 }

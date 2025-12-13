@@ -1,12 +1,29 @@
 //! Train a CNN on MNIST using luminal
 //!
 //! This example demonstrates:
-//! - Building a CNN with Conv2D layer (using strided convolution for downsampling)
+//! - Building a LeNet-5 style CNN with multiple Conv2D layers and pooling
 //! - Using the Adam optimizer with cosine annealing learning rate schedule
 //! - Training on the MNIST dataset
 //! - GPU acceleration with Metal (macOS) or CUDA
+//! - Optional search-based optimization via `luminal::search`
 //!
-//! The CNN achieves ~97.5% test accuracy in 3 epochs.
+//! The LeNet CNN achieves ~98%+ test accuracy in 3 epochs.
+//!
+//! ## Architecture (LeNet-5 style)
+//!
+//! ```text
+//! Input (1, 28, 28)
+//!   ↓
+//! Conv2D(1→6, 5x5, padding=2) → ReLU → AvgPool2D(2x2) → (6, 14, 14)
+//!   ↓
+//! Conv2D(6→16, 5x5) → ReLU → AvgPool2D(2x2) → (16, 5, 5)
+//!   ↓
+//! Flatten → Linear(400→120) → ReLU
+//!   ↓
+//! Linear(120→84) → ReLU
+//!   ↓
+//! Linear(84→10)
+//! ```
 //!
 //! ## Setup
 //!
@@ -17,10 +34,21 @@
 //!
 //! ## Running
 //!
-//! CNN (default):
+//! LeNet CNN (default, fast compilation):
 //! ```bash
 //! cargo run -p mnist_cnn --release --features metal
 //! cargo run -p mnist_cnn --release --features cuda
+//! ```
+//!
+//! LeNet CNN with search-based optimization:
+//! ```bash
+//! cargo run -p mnist_cnn --release --features metal,search -- --optimal
+//! cargo run -p mnist_cnn --release --features cuda,search -- --optimal
+//! ```
+//!
+//! Simple CNN (single conv layer):
+//! ```bash
+//! cargo run -p mnist_cnn --release --features metal -- --simple
 //! ```
 //!
 //! MLP (for comparison):
@@ -31,7 +59,7 @@
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use luminal::nn::{Conv2D, Linear};
+use luminal::nn::{AvgPool2D, Conv2D, Linear};
 use luminal::prelude::*;
 use luminal::training::{
     adam_on_graph, cross_entropy_with_logits_loss, AdamConfig, Autograd, CosineAnnealingLR,
@@ -46,7 +74,7 @@ use rand::thread_rng;
 #[command(author, version, about)]
 struct Args {
     /// Number of training epochs
-    #[arg(short, long, default_value_t = 3)]
+    #[arg(short, long, default_value_t = 1)]
     epochs: usize,
 
     /// Batch size for training
@@ -61,21 +89,123 @@ struct Args {
     #[arg(long)]
     mlp: bool,
 
+    /// Use simple single-layer CNN instead of LeNet
+    #[arg(long)]
+    simple: bool,
+
     /// Print detailed performance metrics
     #[arg(short, long)]
     verbose: bool,
+
+    /// Use search-based optimization (requires 'search' feature)
+    ///
+    /// This uses luminal::search with egglog equality saturation to find
+    /// optimal kernel implementations. Slower compile time, potentially
+    /// faster runtime.
+    #[arg(long)]
+    optimal: bool,
 }
 
-/// CNN for MNIST using a single strided convolution for downsampling
+/// LeNet-5 style CNN for MNIST
+///
 /// Architecture:
-///   Conv2D(1, 8, 5x5, stride=2) -> ReLU -> (batch, 8, 12, 12)
-///   Flatten -> Linear(1152, 10)
-struct MnistCNN {
+/// ```text
+/// Input (1, 28, 28)
+///   ↓
+/// Conv2D(1→6, 5x5, padding=2) → ReLU → AvgPool2D(2x2) → (6, 14, 14)
+///   ↓
+/// Conv2D(6→16, 5x5) → ReLU → AvgPool2D(2x2) → (16, 5, 5)
+///   ↓
+/// Flatten → Linear(400→120) → ReLU
+///   ↓
+/// Linear(120→84) → ReLU
+///   ↓
+/// Linear(84→10)
+/// ```
+struct LeNet {
+    conv1: Conv2D,
+    conv2: Conv2D,
+    pool: AvgPool2D,
+    fc1: Linear,
+    fc2: Linear,
+    fc3: Linear,
+}
+
+impl LeNet {
+    fn new(cx: &mut Graph) -> Self {
+        Self {
+            // (1, 28, 28) -> (6, 28, 28) with padding=2, then pool -> (6, 14, 14)
+            conv1: Conv2D::with_padding(1, 6, (5, 5), (1, 1), (1, 1), (2, 2), false, cx),
+            // (6, 14, 14) -> (16, 10, 10), then pool -> (16, 5, 5)
+            conv2: Conv2D::new(6, 16, (5, 5), (1, 1), (1, 1), false, cx),
+            // Pooling layer (shared)
+            pool: AvgPool2D::new((2, 2), (2, 2)),
+            // 16 * 5 * 5 = 400 -> 120
+            fc1: Linear::new(400, 120, false, cx),
+            // 120 -> 84
+            fc2: Linear::new(120, 84, false, cx),
+            // 84 -> 10
+            fc3: Linear::new(84, 10, false, cx),
+        }
+    }
+
+    fn forward(&self, x: GraphTensor) -> GraphTensor {
+        let batch = x.dims()[0];
+
+        // Conv block 1: Conv -> ReLU -> Pool
+        let x = self.conv1.forward(x).relu(); // (batch, 6, 28, 28)
+        let x = self.pool.forward(x); // (batch, 6, 14, 14)
+
+        // Conv block 2: Conv -> ReLU -> Pool
+        let x = self.conv2.forward(x).relu(); // (batch, 16, 10, 10)
+        let x = self.pool.forward(x); // (batch, 16, 5, 5)
+
+        // Flatten and fully connected layers
+        let x = x.reshape((batch, 400));
+        let x = self.fc1.forward(x).relu();
+        let x = self.fc2.forward(x).relu();
+        self.fc3.forward(x)
+    }
+
+    fn init_rand(self) -> Self {
+        Self {
+            conv1: init_conv(self.conv1),
+            conv2: init_conv(self.conv2),
+            pool: self.pool,
+            fc1: init_linear(self.fc1),
+            fc2: init_linear(self.fc2),
+            fc3: init_linear(self.fc3),
+        }
+    }
+
+    fn param_count(&self) -> usize {
+        // conv1: 1 * 6 * 5 * 5 = 150
+        // conv2: 6 * 16 * 5 * 5 = 2400
+        // fc1: 400 * 120 = 48000
+        // fc2: 120 * 84 = 10080
+        // fc3: 84 * 10 = 840
+        150 + 2400 + 48000 + 10080 + 840
+    }
+}
+
+impl SerializeModule for LeNet {
+    fn serialize(&self, s: &mut luminal::module::Serializer) {
+        s.module("conv1", &self.conv1);
+        s.module("conv2", &self.conv2);
+        s.module("fc1", &self.fc1);
+        s.module("fc2", &self.fc2);
+        s.module("fc3", &self.fc3);
+    }
+}
+
+/// Simple CNN for MNIST using a single strided convolution
+/// (Legacy architecture, use --simple flag)
+struct SimpleCNN {
     conv1: Conv2D,
     fc: Linear,
 }
 
-impl MnistCNN {
+impl SimpleCNN {
     fn new(cx: &mut Graph) -> Self {
         Self {
             // (1, 28, 28) -> (8, 12, 12)
@@ -108,7 +238,7 @@ impl MnistCNN {
     }
 }
 
-impl SerializeModule for MnistCNN {
+impl SerializeModule for SimpleCNN {
     fn serialize(&self, s: &mut luminal::module::Serializer) {
         s.module("conv1", &self.conv1);
         s.module("fc", &self.fc);
@@ -290,11 +420,16 @@ fn main() {
         let out = model.forward(input).retrieve();
         let w = params(&model);
         (out, w, "MLP", model.param_count())
-    } else {
-        let model = MnistCNN::new(&mut cx).init_rand();
+    } else if args.simple {
+        let model = SimpleCNN::new(&mut cx).init_rand();
         let out = model.forward(input).retrieve();
         let w = params(&model);
-        (out, w, "CNN", model.param_count())
+        (out, w, "Simple CNN", model.param_count())
+    } else {
+        let model = LeNet::new(&mut cx).init_rand();
+        let out = model.forward(input).retrieve();
+        let w = params(&model);
+        (out, w, "LeNet", model.param_count())
     };
 
     println!("   Model: {} with {} parameters", model_name, param_count);
@@ -326,23 +461,50 @@ fn main() {
     );
 
     #[cfg(feature = "metal")]
-    cx.compile(
-        (
-            GenericCompiler::default(),
-            luminal_metal::MetalCompiler::<f32>::default(),
-        ),
-        remap,
-    );
+    {
+        if args.optimal {
+            cx.compile(
+                (
+                    GenericCompiler::default(),
+                    luminal_metal::UnifiedMetalCompiler::<f32>::optimal(),
+                ),
+                remap,
+            );
+        } else {
+            cx.compile(
+                (
+                    GenericCompiler::default(),
+                    luminal_metal::UnifiedMetalCompiler::<f32>::fast(),
+                ),
+                remap,
+            );
+        }
+    }
     #[cfg(feature = "cuda")]
-    cx.compile(
-        (
-            GenericCompiler::default(),
-            luminal_cuda::CudaCompiler::<f32>::default(),
-        ),
-        remap,
-    );
+    {
+        if args.optimal {
+            cx.compile(
+                (
+                    GenericCompiler::default(),
+                    luminal_cuda::UnifiedCudaCompiler::<f32>::optimal(),
+                ),
+                remap,
+            );
+        } else {
+            cx.compile(
+                (
+                    GenericCompiler::default(),
+                    luminal_cuda::UnifiedCudaCompiler::<f32>::fast(),
+                ),
+                remap,
+            );
+        }
+    }
     #[cfg(not(any(feature = "metal", feature = "cuda")))]
-    cx.compile(GenericCompiler::default(), remap);
+    {
+        let _ = args.optimal; // Suppress unused warning
+        cx.compile(GenericCompiler::default(), remap);
+    }
 
     let mut metrics = Metrics::new();
     metrics.compile_time = compile_start.elapsed();
@@ -433,9 +595,21 @@ fn print_header(args: &Args) {
     let backend = "CUDA";
     #[cfg(not(any(feature = "metal", feature = "cuda")))]
     let backend = "CPU";
-    let model = if args.mlp { "MLP" } else { "CNN" };
+    let model = if args.mlp {
+        "MLP"
+    } else if args.simple {
+        "Simple CNN"
+    } else {
+        "LeNet"
+    };
+    let compile_mode = if args.optimal {
+        "Optimal (search)"
+    } else {
+        "Fast"
+    };
     println!("║ Backend: {:<51} ║", backend);
     println!("║ Model: {:<53} ║", model);
+    println!("║ Compilation: {:<47} ║", compile_mode);
     println!("║ Epochs: {:<52} ║", args.epochs);
     println!("║ Batch Size: {:<48} ║", args.batch_size);
     println!("║ Learning Rate: {:<45} ║", args.lr);
